@@ -89,6 +89,7 @@ def orfs_design(platform = None, design = None):
             if "$(" not in vf and "${" not in vf and "//." not in vf and not vf.endswith(":")
         ]
         block_sources = _convert_sources(block_config["sources"], pkg)
+        # Real flow
         orfs_flow(
             name = block_config["name"],
             abstract_stage = "cts",
@@ -96,10 +97,21 @@ def orfs_design(platform = None, design = None):
             pdk = "//flow:" + platform,
             arguments = block_config["arguments"],
             sources = block_sources,
+        )
+        macros.append(":%s_generate_abstract" % block_config["name"])
+
+        # Lint flow
+        orfs_flow(
+            name = block_config["name"],
+            abstract_stage = "cts",
+            verilog_files = block_verilog,
+            pdk = "//flow:" + platform,
+            arguments = block_config["arguments"],
+            sources = block_sources,
+            variant = "lint",
             lint = True,
             openroad = "@mock-openroad//src/bin:openroad",
         )
-        macros.append(":%s_generate_abstract" % block_config["name"])
 
     # Filter verilog_files: skip unresolved Make variables and invalid labels
     verilog_files = []
@@ -126,6 +138,7 @@ def orfs_design(platform = None, design = None):
         if inc_dir:
             extra_data.append("//" + inc_dir + ":include")
 
+    # Real flow — uses Docker image with real OpenROAD/Yosys
     orfs_flow(
         name = name,
         verilog_files = verilog_files,
@@ -134,6 +147,18 @@ def orfs_design(platform = None, design = None):
         sources = sources,
         macros = macros if macros else [],
         stage_data = {"synth": extra_data} if extra_data else {},
+    )
+
+    # Lint flow — fast validation with mock-openroad
+    orfs_flow(
+        name = name,
+        verilog_files = verilog_files,
+        pdk = "//flow:" + platform,
+        arguments = config["arguments"],
+        sources = sources,
+        macros = macros if macros else [],
+        stage_data = {"synth": extra_data} if extra_data else {},
+        variant = "lint",
         lint = True,
         openroad = "@mock-openroad//src/bin:openroad",
     )
