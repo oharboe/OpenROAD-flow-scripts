@@ -36,6 +36,13 @@ read_checkpoint $::env(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil
 
 hierarchy -check -top $::env(DESIGN_NAME)
 
+# Blackbox modules after reading checkpoint (used by parallel partition synthesis)
+if { [env_var_exists_and_non_empty SYNTH_BLACKBOXES] } {
+  foreach m $::env(SYNTH_BLACKBOXES) {
+    blackbox $m
+  }
+}
+
 if { $::env(SYNTH_GUT) } {
   # /deletes all cells at the top level, which will quickly optimize away
   # everything else, including macros.
