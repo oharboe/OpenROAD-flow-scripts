@@ -1,6 +1,6 @@
 """Macro to create orfs_flow() targets from parsed config.mk data."""
 
-load("@bazel-orfs//:openroad.bzl", "orfs_flow")
+load("@bazel-orfs//:openroad.bzl", "NUM_CPUS", "orfs_flow")
 load("@orfs_designs//:designs.bzl", "DESIGNS")
 
 def _convert_sources(sources, pkg):
@@ -162,6 +162,7 @@ def orfs_design(platform = None, design = None):
             extra_data.append("//" + inc_dir + ":include")
 
     # Real flow — uses Docker image with real OpenROAD/Yosys
+    parallel = NUM_CPUS if config["arguments"].get("SYNTH_HIERARCHICAL") == "1" else 0
     orfs_flow(
         name = name,
         verilog_files = verilog_files,
@@ -171,6 +172,7 @@ def orfs_design(platform = None, design = None):
         macros = macros if macros else [],
         stage_data = {"synth": extra_data} if extra_data else {},
         tags = tags,
+        parallel_synth = parallel,
     )
 
     # Lint flow — fast validation with mock-openroad
