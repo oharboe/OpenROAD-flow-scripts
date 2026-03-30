@@ -28,28 +28,7 @@ if { [env_var_exists_and_non_empty SYNTH_MINIMUM_KEEP_SIZE] } {
   keep_hierarchy
 }
 
-# Export kept module list as JSON
-set kept_raw [tee -q -s result.string ls -q A:keep_hierarchy=1]
-set kept_modules {}
-foreach line [split $kept_raw "\n"] {
-  set m [string trim $line]
-  if { $m ne "" } {
-    lappend kept_modules $m
-  }
-}
-
-set fp [open $::env(RESULTS_DIR)/kept_modules.json "w"]
-puts -nonewline $fp "\{\"modules\": \["
-set first 1
-foreach m $kept_modules {
-  if { !$first } { puts -nonewline $fp ", " }
-  puts -nonewline $fp "\"$m\""
-  set first 0
-}
-puts $fp "\]\}"
-close $fp
-
-# Save RTLIL checkpoint after keep_hierarchy decisions for partition reuse
+# Save RTLIL checkpoint after keep_hierarchy decisions.
+# The kept module list (kept_modules.json) is extracted separately
+# by rtlil_kept_modules.py for fast iteration.
 write_rtlil $::env(RESULTS_DIR)/1_1_yosys_keep.rtlil
-
-puts "Kept [llength $kept_modules] modules: $kept_modules"

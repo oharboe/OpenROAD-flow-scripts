@@ -38,14 +38,16 @@ if { [env_var_exists_and_non_empty SYNTH_CHECKPOINT] } {
   read_checkpoint $::env(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil
 }
 
-hierarchy -check -top $::env(DESIGN_NAME)
-
-# Blackbox modules after reading checkpoint (used by parallel partition synthesis)
+# Blackbox modules before hierarchy check (used by parallel partition synthesis)
 if { [env_var_exists_and_non_empty SYNTH_BLACKBOXES] } {
   foreach m $::env(SYNTH_BLACKBOXES) {
-    blackbox $m
+    if { ![catch {blackbox $m}] } {
+      # silently skip modules not in the design
+    }
   }
 }
+
+hierarchy -check -top $::env(DESIGN_NAME)
 
 if { $::env(SYNTH_GUT) } {
   # /deletes all cells at the top level, which will quickly optimize away
