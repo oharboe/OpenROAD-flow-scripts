@@ -7,10 +7,15 @@ module(
 )
 
 bazel_dep(name = "bazel-orfs")
-git_override(
+local_path_override(
     module_name = "bazel-orfs",
-    commit = "2dbd8f0fa9c1f1cc4bf5d52f680b9116fb204219",
-    remote = "https://github.com/The-OpenROAD-Project/bazel-orfs.git",
+    path = "../bazel-orfs",
+)
+
+bazel_dep(name = "mock-openroad", version = "0.0.1")
+local_path_override(
+    module_name = "mock-openroad",
+    path = "../bazel-orfs/mock/openroad",
 )
 
 bazel_dep(name = "rules_python", version = "1.2.0")

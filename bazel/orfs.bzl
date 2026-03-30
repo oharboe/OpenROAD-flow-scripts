@@ -93,6 +93,8 @@ def orfs_design(platform = None, design = None):
             pdk = "//flow:" + platform,
             arguments = block_config["arguments"],
             sources = block_sources,
+            lint = True,
+            openroad = "@mock-openroad//src/bin:openroad",
         )
         macros.append(":%s_generate_abstract" % block_config["name"])
 
@@ -130,4 +132,6 @@ def orfs_design(platform = None, design = None):
         sources = sources,
         macros = macros if macros else [],
         stage_data = {"synth": extra_data} if extra_data else {},
+        lint = True,
+        openroad = "@mock-openroad//src/bin:openroad",
     )
