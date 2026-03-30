@@ -57,12 +57,14 @@ for module in "${MY_MODULES[@]}"; do
   # SYNTH_CHECKPOINT: skip coarse synth + keep_hierarchy (already done)
   # SYNTH_BLACKBOXES: all other kept modules are blackboxed
   # DESIGN_NAME: override to this module
+  # Truncate module name in log filename to avoid filesystem limits
+  log_module="${module:0:80}"
   SYNTH_CHECKPOINT="$RESULTS_DIR/1_1_yosys_keep.rtlil" \
   SYNTH_BLACKBOXES="$BLACKBOXES" \
   DESIGN_NAME="$module" \
     "$SCRIPTS_DIR/synth.sh" \
     "$SCRIPTS_DIR/synth.tcl" \
-    "$LOG_DIR/1_2_yosys_partition_${PARTITION_ID}_${module}.log"
+    "$LOG_DIR/1_2_yosys_partition_${PARTITION_ID}_${log_module}.log"
 
   # Append this module's netlist to partition output
   cat "$RESULTS_DIR/1_2_yosys.v" >> "$OUTPUT"

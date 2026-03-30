@@ -52,19 +52,21 @@ def orfs_design(platform = None, design = None):
     )
 
     # Create filegroups for wildcard source patterns (e.g. ADDITIONAL_LEFS)
+    existing_rules = native.existing_rules()
     for fg_name, fg_glob in [
         ("lef", ["*.lef"]),
         ("lib", ["*.lib"]),
         ("gds", ["*.gds.gz"]),
         ("verilog", ["*.v", "*.sv"]),
     ]:
-        srcs = native.glob(fg_glob, allow_empty = True)
-        if srcs:
-            native.filegroup(
-                name = fg_name,
-                srcs = srcs,
-                visibility = ["//visibility:public"],
-            )
+        if fg_name not in existing_rules:
+            srcs = native.glob(fg_glob, allow_empty = True)
+            if srcs:
+                native.filegroup(
+                    name = fg_name,
+                    srcs = srcs,
+                    visibility = ["//visibility:public"],
+                )
 
     pkg = native.package_name()  # e.g., "flow/designs/asap7/gcd"
     parts = pkg.split("/")
