@@ -53,9 +53,11 @@ for module in "${MY_MODULES[@]}"; do
 
   echo "=== Synthesizing module: $module (blackboxing ${#MY_MODULES[@]}-1 + others) ==="
 
-  # Run full Yosys synthesis for this module
+  # Run synthesis from keep checkpoint for this module.
+  # SYNTH_CHECKPOINT: skip coarse synth + keep_hierarchy (already done)
   # SYNTH_BLACKBOXES: all other kept modules are blackboxed
   # DESIGN_NAME: override to this module
+  SYNTH_CHECKPOINT="$RESULTS_DIR/1_1_yosys_keep.rtlil" \
   SYNTH_BLACKBOXES="$BLACKBOXES" \
   DESIGN_NAME="$module" \
     "$SCRIPTS_DIR/synth.sh" \
