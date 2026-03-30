@@ -18,9 +18,7 @@ def _convert_sources(sources, pkg):
             # Skip invalid paths like //./
             if "//." in label:
                 continue
-            # Skip platform paths — already included in PDK
-            if "//flow/platforms/" in label:
-                continue
+            # Platform paths (fakeram lef/lib) are needed by the flow
             # Skip partial patterns and directory refs
             if "*" in label or "))" in label:
                 continue
@@ -107,9 +105,8 @@ def orfs_design(platform = None, design = None):
         # Skip invalid paths
         if "//." in vf or vf.endswith(":"):
             continue
-        # Skip platform paths — already in PDK
-        if "//flow/platforms/" in vf:
-            continue
+        # Platform verilog (fakeram etc.) is needed for synthesis
+        # PDK provides liberty/lef/tech, not behavioral verilog
         # Skip directory references (VERILOG_INCLUDE_DIRS)
         if vf.endswith(":include") or "/include" in vf.split(":")[-1]:
             continue

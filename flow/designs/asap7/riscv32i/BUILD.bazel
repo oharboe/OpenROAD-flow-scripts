@@ -1,5 +1,6 @@
-load("//bazel:orfs.bzl", "orfs_design")
+# TODO: config.mk needs platform fakeram verilog in VERILOG_FILES
+# load("//bazel:orfs.bzl", "orfs_design")
 
 exports_files(glob(["*"]))
 
-orfs_design()
+# orfs_design()

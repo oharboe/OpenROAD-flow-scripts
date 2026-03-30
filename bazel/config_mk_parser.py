@@ -685,6 +685,11 @@ class ConfigMkParser:
                 if path.startswith("designs/"):
                     path = f"flow/{path}"
 
+        # Platform files live under the //flow package (no sub-packages)
+        if path.startswith("flow/platforms/"):
+            rel = path[len("flow/"):]  # e.g. platforms/asap7/verilog/fakeram7_64x256.sv
+            return f"//flow:{rel}"
+
         # Split into package and file: //dir:filename
         if "/" in path:
             dir_part = os.path.dirname(path)

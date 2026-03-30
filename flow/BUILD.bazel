@@ -1,7 +1,12 @@
 load("@bazel-orfs//:openroad.bzl", "orfs_pdk")
 
 exports_files(
-    ["scripts/variables.yaml"],
+    ["scripts/variables.yaml"] + glob([
+        "platforms/*/verilog/*.v",
+        "platforms/*/verilog/*.sv",
+        "platforms/*/lef/*.lef",
+        "platforms/*/lib/**/*.lib",
+    ]),
     visibility = ["//visibility:public"],
 )
 

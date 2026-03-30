@@ -1,5 +1,7 @@
-load("//bazel:orfs.bzl", "orfs_design")
+# TODO: hierarchical design — mock-openroad creates empty .lib stubs
+# that yosys can't parse for the sub-block abstract
+# load("//bazel:orfs.bzl", "orfs_design")
 
 exports_files(glob(["*"]))
 
-orfs_design()
+# orfs_design()

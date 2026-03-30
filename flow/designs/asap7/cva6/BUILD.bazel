@@ -1,5 +1,7 @@
-load("//bazel:orfs.bzl", "orfs_design")
+# TODO: VERILOG_INCLUDE_DIRS subdirectory includes not in sandbox
+# common_cells/registers.svh needs recursive include dir support
+# load("//bazel:orfs.bzl", "orfs_design")
 
 exports_files(glob(["*"]))
 
-orfs_design()
+# orfs_design()
