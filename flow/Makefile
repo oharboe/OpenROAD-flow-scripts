@@ -272,6 +272,14 @@ do-yosys: yosys-dependencies
 do-yosys-canonicalize: yosys-dependencies
 	$(SCRIPTS_DIR)/synth.sh $(SCRIPTS_DIR)/synth_canonicalize.tcl $(LOG_DIR)/1_1_yosys_canonicalize.log
 
+.PHONY: do-yosys-keep
+do-yosys-keep: yosys-dependencies
+	$(SCRIPTS_DIR)/synth.sh $(SCRIPTS_DIR)/synth_keep.tcl $(LOG_DIR)/1_1_yosys_keep.log
+
+.PHONY: do-yosys-partition
+do-yosys-partition: yosys-dependencies
+	$(SCRIPTS_DIR)/synth_partition.sh
+
 $(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil: $(YOSYS_DEPENDENCIES)
 	$(UNSET_AND_MAKE) do-yosys-canonicalize
 
