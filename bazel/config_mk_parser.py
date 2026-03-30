@@ -52,6 +52,7 @@ SOURCE_VARS = {
     "WRAP_LIBS",
     "SYNTH_CANONICALIZE_TCL",
     "FOOTPRINT_TCL",
+    "SDC_FILE_EXTRA",
 }
 
 # Variables that are purely for path resolution, not passed to orfs_flow()
