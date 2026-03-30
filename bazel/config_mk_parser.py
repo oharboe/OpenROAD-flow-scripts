@@ -662,13 +662,47 @@ class ConfigMkParser:
         if not resolved:
             return []
 
+        # Unwrap $(sort $(wildcard ...)) and $(wildcard ...) before splitting,
+        # since these contain spaces that aren't token separators.
+        unwrapped = re.sub(
+            r'\$\(sort\s+\$\(wildcard\s+(.+?)\)\s*\)',
+            r'\1',
+            resolved,
+        )
+        unwrapped = re.sub(
+            r'\$\(wildcard\s+(.+?)\)',
+            r'\1',
+            unwrapped,
+        )
+
         labels = []
 
         # Split on whitespace for multi-file variables
-        tokens = resolved.split()
+        tokens = unwrapped.split()
         for token in tokens:
             token = token.strip()
             if not token:
+                continue
+
+            # Map wildcard patterns to filegroup labels.
+            # e.g. flow/designs/asap7/swerv_wrapper/lef/*.lef
+            #   -> //flow/designs/asap7/swerv_wrapper/lef:lef
+            # The target BUILD.bazel must define a matching filegroup.
+            if "*" in token or "?" in token:
+                dir_part = os.path.dirname(token)
+                ext = os.path.splitext(token)[1].lstrip(".")
+                # Map file extension to filegroup name
+                ext_to_group = {
+                    "v": "verilog", "sv": "verilog",
+                    "lef": "lef", "lib": "lib",
+                    "gz": "gds",
+                }
+                group_name = ext_to_group.get(ext, ext)
+                label = self._path_to_label(
+                    dir_part + "/" + group_name, result, line_num
+                )
+                if label:
+                    labels.append(label)
                 continue
 
             label = self._path_to_label(token, result, line_num)
