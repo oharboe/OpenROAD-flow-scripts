@@ -11,3 +11,12 @@ filegroup(
     ),
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "include",
+    srcs = glob(
+        include = ["*.v", "*.sv", "*.svh"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)

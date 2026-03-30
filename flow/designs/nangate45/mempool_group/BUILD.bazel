@@ -1,5 +1,3 @@
-load("//bazel:orfs.bzl", "orfs_design")
-
-exports_files(glob(["*"]))
-
-orfs_design()
+# TODO: complex include dir dependencies (common_cells, register_interface, axi)
+# load("//bazel:orfs.bzl", "orfs_design")
+# orfs_design()

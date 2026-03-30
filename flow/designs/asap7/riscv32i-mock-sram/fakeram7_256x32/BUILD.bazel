@@ -1,7 +1,5 @@
 load("//bazel:orfs.bzl", "orfs_design")
 
-exports_files(glob(["*"]))
-
 filegroup(
     name = "verilog",
     srcs = glob(["*.v", "*.sv"], allow_empty = True),

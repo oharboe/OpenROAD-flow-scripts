@@ -1,7 +1,4 @@
 # TODO: design bug — uart.v connects prescale port to uart_rx but
 # uart-no-param/uart_rx.v doesn't have that port
 # load("//bazel:orfs.bzl", "orfs_design")
-
-exports_files(glob(["*"]))
-
 # orfs_design()

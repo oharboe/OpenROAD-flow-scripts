@@ -46,6 +46,11 @@ def orfs_design(platform = None, design = None):
         platform: Override platform (default: from package path).
         design: Override design nickname (default: from package path).
     """
+    native.exports_files(
+        native.glob(["*"]),
+        visibility = ["//visibility:public"],
+    )
+
     pkg = native.package_name()  # e.g., "flow/designs/asap7/gcd"
     parts = pkg.split("/")
 
