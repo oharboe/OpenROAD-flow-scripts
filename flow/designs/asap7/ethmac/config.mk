@@ -1,4 +1,5 @@
 export PLATFORM               = asap7
+export SYNTH_HIERARCHICAL = 1
 
 export DESIGN_NAME            = ethmac
 
