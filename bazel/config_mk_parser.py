@@ -210,6 +210,18 @@ class ConfigMkParser:
                         category="deprecated",
                     ))
 
+        # Emit deferred warnings for variables only set in conditionals.
+        # These are variables that never got a value from a default branch,
+        # so they will be absent in the Bazel build.
+        for var_name, ln in getattr(result, '_conditional_only_vars', {}).items():
+            if var_name not in raw_vars:
+                result.warnings.append(Warning(
+                    line_number=ln,
+                    message=f"{var_name}: only set inside conditional, "
+                            "will be missing in Bazel build",
+                    category="info",
+                ))
+
         # Build variable resolution context
         ctx = self._build_context(result, config_path, raw_vars)
 
@@ -373,17 +385,18 @@ class ConfigMkParser:
         if op == "?=" and var_name in raw_vars and not conditional:
             return
 
-        # Skip all conditional assignments — the parser can't evaluate
-        # Make conditionals, so extracting values from unknown branches
-        # produces wrong configs.
+        # Skip non-default conditional assignments — the parser can't
+        # evaluate Make conditionals, so extracting values from unknown
+        # branches produces wrong configs. Warnings are deferred to
+        # _check_conditional_warnings() after all branches are processed.
         if conditional:
             if var_name not in raw_vars and var_name not in NON_ARGUMENT_VARS:
-                result.warnings.append(Warning(
-                    line_number=line_num + 1,
-                    message=f"{var_name}: only set inside conditional, "
-                            "will be missing in Bazel build",
-                    category="error",
-                ))
+                result._conditional_only_vars = getattr(
+                    result, '_conditional_only_vars', {}
+                )
+                result._conditional_only_vars.setdefault(
+                    var_name, line_num + 1
+                )
             return
 
         raw_vars[var_name] = (value, op, line_num + 1)
