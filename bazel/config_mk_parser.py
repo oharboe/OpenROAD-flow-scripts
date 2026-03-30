@@ -353,8 +353,17 @@ class ConfigMkParser:
         if op == "?=" and var_name in raw_vars and not conditional:
             return
 
-        # For conditional assignments, only store if var not already set unconditionally
-        if conditional and var_name in raw_vars:
+        # Skip all conditional assignments — the parser can't evaluate
+        # Make conditionals, so extracting values from unknown branches
+        # produces wrong configs.
+        if conditional:
+            if var_name not in raw_vars and var_name not in NON_ARGUMENT_VARS:
+                result.warnings.append(Warning(
+                    line_number=line_num + 1,
+                    message=f"{var_name}: only set inside conditional, "
+                            "will be missing in Bazel build",
+                    category="error",
+                ))
             return
 
         raw_vars[var_name] = (value, op, line_num + 1)
