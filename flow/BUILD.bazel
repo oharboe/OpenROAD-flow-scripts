@@ -6,6 +6,7 @@ exports_files(
         "platforms/*/verilog/*.sv",
         "platforms/*/lef/*.lef",
         "platforms/*/lib/**/*.lib",
+        "platforms/*/openRoad/**/*.tcl",
     ]),
     visibility = ["//visibility:public"],
 )

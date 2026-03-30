@@ -1,12 +1,12 @@
 exports_files(
-    glob(["*.v", "*.sv", "*.svh"], allow_empty = True),
+    glob(["**/*.v", "**/*.sv", "**/*.svh"], allow_empty = True),
     visibility = ["//visibility:public"],
 )
 
 filegroup(
     name = "verilog",
     srcs = glob(
-        include = ["*.v", "*.sv"],
+        include = ["**/*.v", "**/*.sv"],
         allow_empty = True,
     ),
     visibility = ["//visibility:public"],
@@ -15,7 +15,7 @@ filegroup(
 filegroup(
     name = "include",
     srcs = glob(
-        include = ["*.v", "*.sv", "*.svh"],
+        include = ["**/*.v", "**/*.sv", "**/*.svh"],
         allow_empty = True,
     ),
     visibility = ["//visibility:public"],

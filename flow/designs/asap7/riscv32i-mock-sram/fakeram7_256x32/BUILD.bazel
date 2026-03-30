@@ -1,5 +1,4 @@
-# TODO: mock-openroad creates empty .lib stubs that yosys can't parse
-# load("//bazel:orfs.bzl", "orfs_design")
+load("//bazel:orfs.bzl", "orfs_design")
 
 exports_files(glob(["*"]))
 
@@ -9,4 +8,4 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-# orfs_design()
+orfs_design()
