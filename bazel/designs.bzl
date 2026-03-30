@@ -25,6 +25,10 @@ def _orfs_designs_impl(repository_ctx):
     designs_path = repository_ctx.path(repository_ctx.attr.designs_dir)
     designs_dir = str(designs_path.dirname)
 
+    # Watch the parser file so Bazel re-fetches this repo when it changes.
+    # read(label) registers it as a watched input; read(path) does not.
+    repository_ctx.read(repository_ctx.attr._parser)
+
     python = repository_ctx.which("python3") or repository_ctx.which("python")
     if not python:
         fail("python3 not found in PATH")
