@@ -70,6 +70,7 @@ use_repo(orfs, "docker_orfs")
 # bazel_dep(name = "toolchains_llvm", version = "1.5.0")
 
 # Auto-generate orfs_flow() targets from config.mk files
+# Designs with rules-base.json are CI-enabled; others get tags=["manual"]
 orfs_designs = use_repo_rule("//bazel:designs.bzl", "orfs_designs")
 
 orfs_designs(
@@ -77,9 +78,12 @@ orfs_designs(
     designs_dir = "//flow/designs:BUILD.bazel",
     platforms = [
         "asap7",
+        "gf12",
         "gf180",
+        "gf55",
         "ihp-sg13g2",
         "nangate45",
+        "rapidus2hp",
         "sky130hd",
         "sky130hs",
     ],

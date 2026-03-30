@@ -20,6 +20,25 @@ def _find_config_files(repository_ctx, designs_dir, platforms):
                     configs.append(line)
     return configs
 
+def _find_ci_designs(repository_ctx, designs_dir, platforms):
+    """Find designs that have rules-base.json (CI-enabled)."""
+    ci_designs = {}
+    for platform in platforms:
+        platform_dir = designs_dir + "/" + platform
+        result = repository_ctx.execute(["find", platform_dir, "-name", "rules-base.json", "-type", "f"])
+        if result.return_code == 0:
+            for line in result.stdout.strip().split("\n"):
+                if not line:
+                    continue
+
+                # Extract platform/design from path
+                # e.g. .../designs/sky130hd/gcd/rules-base.json -> sky130hd/gcd
+                rel = line[len(designs_dir) + 1:]
+                parts = rel.split("/")
+                if len(parts) >= 2:
+                    ci_designs[parts[0] + "/" + parts[1]] = True
+    return ci_designs
+
 def _orfs_designs_impl(repository_ctx):
     parser_path = repository_ctx.path(repository_ctx.attr._parser)
     designs_path = repository_ctx.path(repository_ctx.attr.designs_dir)
@@ -57,6 +76,13 @@ def _orfs_designs_impl(repository_ctx):
 
     configs = json.decode(result.stdout)
 
+    # Find CI-enabled designs (those with rules-base.json)
+    ci_designs = _find_ci_designs(
+        repository_ctx,
+        designs_dir,
+        repository_ctx.attr.platforms,
+    )
+
     # Build a dict keyed by "platform/design_nickname"
     designs = {}
     for config in configs:
@@ -66,15 +92,41 @@ def _orfs_designs_impl(repository_ctx):
         if not name or not platform or not nickname:
             continue
 
+        # Skip designs with source files that don't exist (e.g. confidential designs).
+        # designs_dir points to .../flow/designs, so go up two levels for workspace root.
+        skip = False
+        for vf in config.get("verilog_files", []):
+            if vf.startswith("//"):
+                pkg_path = vf[2:].split(":")[0]
+                full_path = designs_dir + "/../../" + pkg_path
+                if not repository_ctx.path(full_path).exists:
+                    skip = True
+                    break
+        if skip:
+            continue
+
         key = "%s/%s" % (platform, nickname)
-        designs[key] = {
+        entry = {
             "name": name,
             "platform": platform,
             "verilog_files": config.get("verilog_files", []),
             "sources": config.get("sources", {}),
             "arguments": config.get("arguments", {}),
             "blocks": config.get("blocks", []),
+            "ci": key in ci_designs,
         }
+        designs[key] = entry
+
+        # Also index by directory name when it differs from nickname,
+        # so orfs_design() can find the config from the package path.
+        config_path = config.get("config_path", "")
+        if config_path:
+            parts = config_path.split("/")
+            if len(parts) >= 4:
+                dirname = parts[-2]  # e.g. "black_parrot" from ".../black_parrot/config.mk"
+                dir_key = "%s/%s" % (platform, dirname)
+                if dir_key != key:
+                    designs[dir_key] = entry
 
         # Also add block_configs as separate entries
         for block_config in config.get("block_configs", []):

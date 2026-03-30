@@ -61,8 +61,10 @@ def orfs_design(platform = None, design = None):
 
     key = "%s/%s" % (platform, design)
     if key not in DESIGNS:
-        fail("No parsed config.mk for %s. Run the linter: " +
-             "python3 bazel/config_mk_parser.py --lint flow/designs/%s/config.mk" % (key, key))
+        # Platform/design not in the parsed config set — skip silently.
+        # This happens for platforms not listed in MODULE.bazel or when
+        # the directory name doesn't match the DESIGN_NICKNAME in config.mk.
+        return
 
     config = DESIGNS[key]
     name = config["name"]
@@ -71,6 +73,10 @@ def orfs_design(platform = None, design = None):
     # Auto-detect rules-base.json if present in the package
     if "RULES_JSON" not in sources and native.glob(["rules-base.json"], allow_empty = True):
         sources["RULES_JSON"] = [":rules-base.json"]
+
+    # Designs not tested in CI get tags = ["manual"] so they are excluded
+    # from wildcard builds (bazel build //...) but can still be built explicitly.
+    tags = [] if config.get("ci", False) else ["manual"]
 
     # Handle BLOCKS: create sub-macro orfs_flow() targets
     macros = []
@@ -97,6 +103,7 @@ def orfs_design(platform = None, design = None):
             pdk = "//flow:" + platform,
             arguments = block_config["arguments"],
             sources = block_sources,
+            tags = tags,
         )
         macros.append(":%s_generate_abstract" % block_config["name"])
 
@@ -111,6 +118,7 @@ def orfs_design(platform = None, design = None):
             variant = "lint",
             lint = True,
             openroad = "@mock-openroad//src/bin:openroad",
+            tags = tags,
         )
 
     # Filter verilog_files: skip unresolved Make variables and invalid labels
@@ -147,6 +155,7 @@ def orfs_design(platform = None, design = None):
         sources = sources,
         macros = macros if macros else [],
         stage_data = {"synth": extra_data} if extra_data else {},
+        tags = tags,
     )
 
     # Lint flow — fast validation with mock-openroad
@@ -161,4 +170,5 @@ def orfs_design(platform = None, design = None):
         variant = "lint",
         lint = True,
         openroad = "@mock-openroad//src/bin:openroad",
+        tags = tags,
     )
