@@ -59,8 +59,6 @@ PATH_ONLY_VARS = {
     "DESIGN_NICKNAME",
     "SRC_HOME",
     "TEMP_DESIGN_DIR",
-    "chameleon_DIR",
-    "microwatt_DIR",
     "TOP_DESIGN_NICKNAME",
 }
 
