@@ -10,7 +10,8 @@ export VERILOG_FILES = $(DESIGN_HOME)/src/$(DESIGN_NICKNAME)/AsyncResetReg.v \
                        $(DESIGN_HOME)/src/$(DESIGN_NICKNAME)/ClockDivider3.v \
                        $(DESIGN_HOME)/src/$(DESIGN_NICKNAME)/plusarg_reader.v \
                        $(DESIGN_HOME)/src/$(DESIGN_NICKNAME)/freechips.rocketchip.system.TinyConfig.v \
-                       $(DESIGN_HOME)/$(PLATFORM)/$(DESIGN_NICKNAME)/freechips.rocketchip.system.TinyConfig.v
+                       $(DESIGN_HOME)/$(PLATFORM)/$(DESIGN_NICKNAME)/freechips.rocketchip.system.TinyConfig.v \
+                       $(DESIGN_HOME)/$(PLATFORM)/$(DESIGN_NICKNAME)/fakeram_blackbox.v
 
 export SDC_FILE      = $(DESIGN_HOME)/$(PLATFORM)/$(DESIGN_NICKNAME)/constraint.sdc
 

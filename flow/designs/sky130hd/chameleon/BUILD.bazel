@@ -1,6 +1,5 @@
-# TODO: parser can't resolve $(VERILOG_FILES_BLACKBOX) and wildcard in AHB_sys_0
-# load("//bazel:orfs.bzl", "orfs_design")
+load("//bazel:orfs.bzl", "orfs_design")
 
 exports_files(glob(["*"]))
 
-# orfs_design()
+orfs_design()

@@ -400,6 +400,12 @@ class ConfigMkParser:
                 val = raw_vars[var_name][0].strip()
                 ctx[var_name] = self._resolve_refs(val, ctx, None, 0)
 
+        # Add VERILOG_FILES_BLACKBOX to context so it can be substituted
+        # inside VERILOG_FILES wildcard expressions
+        if "VERILOG_FILES_BLACKBOX" in raw_vars:
+            val = raw_vars["VERILOG_FILES_BLACKBOX"][0].strip()
+            ctx["VERILOG_FILES_BLACKBOX"] = self._resolve_refs(val, ctx, None, 0)
+
         return ctx
 
     def _resolve_refs(self, value, ctx, result, line_num):
@@ -493,15 +499,20 @@ class ConfigMkParser:
         labels = []
 
         # Handle $(sort $(wildcard <path>/*.v)) or $(sort $(wildcard <path>/*.sv))
-        # This is the most common pattern
+        # Supports multiple paths: $(sort $(wildcard dir1/*.v dir2/*.v))
         sort_wc_match = re.match(
-            r'^\$\(sort\s+\$\(wildcard\s+(.+?)/\*\.(v|sv)\s*\)\s*\)$',
+            r'^\$\(sort\s+\$\(wildcard\s+(.+)\)\s*\)$',
             resolved.strip()
         )
         if sort_wc_match:
-            dir_path = sort_wc_match.group(1)
-            label = self._dir_to_verilog_label(dir_path)
-            return [label]
+            inner = sort_wc_match.group(1).strip()
+            glob_labels = []
+            for part in inner.split():
+                gm = re.match(r'^(.+)/\*\.(v|sv|svh)$', part.strip())
+                if gm:
+                    glob_labels.append(self._dir_to_verilog_label(gm.group(1)))
+            if glob_labels:
+                return glob_labels
 
         # Handle $(wildcard <path>/*.v) without sort
         wc_match = re.match(
@@ -554,6 +565,11 @@ class ConfigMkParser:
                 dir_path = wm.group(1)
                 labels.append(self._dir_to_verilog_label(dir_path))
                 multi_sort = True
+                continue
+            # Bare glob pattern: path/*.v → :verilog label
+            bare_glob = re.match(r'^(.+)/\*\.(v|sv|svh)$', token.strip())
+            if bare_glob:
+                labels.append(self._dir_to_verilog_label(bare_glob.group(1)))
                 continue
             # Single file reference
             label = self._file_to_label(token, result, line_num)
