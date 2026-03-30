@@ -276,6 +276,10 @@ do-yosys-canonicalize: yosys-dependencies
 do-yosys-keep: yosys-dependencies
 	$(SCRIPTS_DIR)/synth.sh $(SCRIPTS_DIR)/synth_keep.tcl $(LOG_DIR)/1_1_yosys_keep.log
 
+.PHONY: do-yosys-sdc-copy
+do-yosys-sdc-copy:
+	cp $(SDC_FILE) $(RESULTS_DIR)/1_2_yosys.sdc
+
 .PHONY: do-yosys-kept-json
 do-yosys-kept-json:
 	$(PYTHON_EXE) $(SCRIPTS_DIR)/rtlil_kept_modules.py $(RESULTS_DIR)/1_1_yosys_keep.rtlil $(RESULTS_DIR)/kept_modules.json
