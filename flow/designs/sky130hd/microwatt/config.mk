@@ -34,8 +34,6 @@ export SETUP_SLACK_MARGIN = 0.2
 # GRT non-default config
 export FASTROUTE_TCL = $(DESIGN_HOME)/$(PLATFORM)/$(DESIGN_NICKNAME)/fastroute.tcl
 
-export SYNTH_MEMORY_MAX_BITS ?= 42000
-
 ifeq ($(SYNTH_MOCK_LARGE_MEMORIES),1)
     # ca. 3 minutes to run make synth
     #
@@ -44,7 +42,9 @@ ifeq ($(SYNTH_MOCK_LARGE_MEMORIES),1)
     #
     # The goal is to run through the flow quickly to learn what we can
     # about the design without getting bogged down in memory issues.
-    export SYNTH_MEMORY_MAX_BITS = 1024
+    export SYNTH_MEMORY_MAX_BITS ?= 1024
+else
+    export SYNTH_MEMORY_MAX_BITS ?= 42000
 endif
 
 export SWAP_ARITH_OPERATORS = 1

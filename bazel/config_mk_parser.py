@@ -268,7 +268,12 @@ class ConfigMkParser:
 
         joined = _join_continuation_lines(lines)
         in_conditional = 0  # nesting depth
-        conditional_start = None
+        # Track whether current branch at depth 1 is the "default" branch.
+        # The else branch is the default for ifeq/ifneq.
+        # For ifeq ($VAR,) (test-for-empty), the if-branch is default
+        # since Make variables are empty by default.
+        in_default_branch = False
+        cond_test_empty = False  # True when ifeq tests for empty value
 
         for line_num, line in joined:
             stripped = line.strip()
@@ -280,9 +285,13 @@ class ConfigMkParser:
             # Handle conditionals
             if re.match(r'^(ifeq|ifneq|ifdef|ifndef)\b', stripped):
                 if in_conditional == 0:
-                    conditional_start = line_num + 1
                     result.has_conditionals = True
                     self._warn_conditional(stripped, line_num + 1, result)
+                    # ifeq ($(VAR),) tests for empty — if-branch is default
+                    cond_test_empty = bool(re.match(
+                        r'^ifeq\s+\(\$[\({].*[\)}]\s*,\s*\)', stripped
+                    ))
+                    in_default_branch = cond_test_empty
                 in_conditional += 1
                 continue
 
@@ -290,16 +299,26 @@ class ConfigMkParser:
                 # else/else ifeq — stay in conditional
                 if re.match(r'^else\s+(ifeq|ifneq|ifdef|ifndef)\b', stripped):
                     self._warn_conditional(stripped, line_num + 1, result)
+                    in_default_branch = False
+                elif in_conditional == 1:
+                    # Plain else at depth 1: this is the default branch
+                    # (unless the if-branch was already the default)
+                    in_default_branch = not cond_test_empty
                 continue
 
             if stripped == "endif":
+                if in_conditional == 1:
+                    in_default_branch = False
+                    cond_test_empty = False
                 in_conditional = max(0, in_conditional - 1)
                 continue
 
-            # Skip lines inside conditionals for now
-            # (we still parse them but mark the design as having conditionals)
+            # Inside conditionals: only accept assignments from the default branch
             if in_conditional > 0:
-                self._parse_assignment(stripped, line_num, raw_vars, result, conditional=True)
+                self._parse_assignment(
+                    stripped, line_num, raw_vars, result,
+                    conditional=not in_default_branch,
+                )
                 continue
 
             # Handle include directives
