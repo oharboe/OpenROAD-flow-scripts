@@ -735,7 +735,7 @@
     "@@bazel-orfs+//:extension.bzl%orfs_repositories": {
       "general": {
         "bzlTransitiveDigest": "n442YWYaiLaZmB140K7YjK80SbojjoPPnbiBKSmFuSk=",
-        "usagesDigest": "QjWwQcZQFg/SLN+Gpj6wszZ6I5HzTjGfZE3Q12fB27o=",
+        "usagesDigest": "kN404VO76h9sN8hnC3NU50coiQwAhsXt84AqwipKiMg=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -1011,7 +1011,7 @@
     "@@toolchains_llvm+//toolchain/extensions:llvm.bzl%llvm": {
       "general": {
         "bzlTransitiveDigest": "SFT0LhY0ioB2PsbncmTCGyGh8M0OtAJ2fCq0fHtf7ps=",
-        "usagesDigest": "b2QCJVq7u8UHwgGAzwokFi9N2vfS/gNKGaHA4b0aCLI=",
+        "usagesDigest": "mMzUiLApHidNCIpNprLnTVMO0iWUMWQFjyM3QeaUzSo=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
