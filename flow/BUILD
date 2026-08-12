@@ -24,7 +24,10 @@ exports_files(
 # instead of vendoring its own (drifting) copy at the bazel-orfs repo
 # root. See bazel-orfs `private/rules.bzl`.
 exports_files(
-    ["scripts/synth.tcl"],
+    [
+        "scripts/synth.tcl",
+        "scripts/place_only_and_measure.tcl",
+    ],
     visibility = ["//visibility:public"],
 )
 

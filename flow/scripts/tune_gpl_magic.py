@@ -1,74 +1,51 @@
 #!/usr/bin/env python3
 import argparse
-import itertools
 import json
 import subprocess
 import os
+import time
 import yaml
 from pathlib import Path
+import optuna
 
-# The small/smoke test set
-SMOKE_TARGETS = [
-    "//flow/designs/sky130hd/gcd:gcd_route",
-    "//flow/designs/asap7/gcd:gcd_route",
-    "//flow/designs/asap7/uart:uart_route"
+# Small designs for fast broad search
+SMALL_TARGETS = [
+    "//flow/designs/sky130hd/gcd:gcd_tune_gpl",
+    "//flow/designs/asap7/gcd:gcd_tune_gpl"
 ]
 
-# The large/main campaign test set
+# Large designs for detailed search
 LARGE_TARGETS = [
-    "//flow/designs/sky130hd/ibex:ibex_core_route",
-    "//flow/designs/sky130hd/jpeg:jpeg_encoder_route",
-    "//flow/designs/sky130hd/microwatt:microwatt_route",
-    "//flow/designs/sky130hd/riscv32i:riscv_route",
-    "//flow/designs/asap7/mock_array:mock_array_route",
-    "//flow/designs/asap7/swerv:swerv_wrapper_route",
-    "//flow/designs/asap7/rocket:RocketTile_route"
+    "//flow/designs/sky130hd/ibex:ibex_core_tune_gpl",
+    "//flow/designs/sky130hd/jpeg:jpeg_encoder_tune_gpl",
+    "//flow/designs/sky130hd/riscv32i:riscv_tune_gpl",
+    "//flow/designs/asap7/mock_array:mock_array_tune_gpl",
+    "//flow/designs/asap7/rocket:RocketTile_tune_gpl"
 ]
-
-# Grid of hyper-parameters
-PARAM_GRID = {
-    "GPL_WIRELENGTH_PENALTY": [0.1, 0.25, 0.5],
-    "GPL_TIMING_SPAN_CLOCK_PERCENT": [0.05, 0.10, 0.15]
-}
 
 def parse_metrics(target_label):
-    """
-    Given a target like //flow/designs/sky130hd/gcd:gcd_route,
-    find its bazel-bin directory and parse the route metrics.
-    """
-    # e.g. //flow/designs/sky130hd/gcd:gcd_route -> bazel-bin/flow/designs/sky130hd/gcd/gcd_route
     pkg, name = target_label.split(":")
     pkg_path = pkg.replace("//", "")
-    bin_dir = Path("bazel-bin") / pkg_path / name / "reports"
     
-    # Check for the route timing report
-    wns = None
-    tns = None
-    report_file = bin_dir / "route" / "6_1_fill_route_timing.rpt"
-    if not report_file.exists():
-        # Fallback to grt timing if route doesn't exist
-        report_file = bin_dir / "grt" / "5_route_timing.rpt"
-        
+    design_id = pkg_path.replace("flow/designs/", "")
+    report_file = Path("bazel-bin") / pkg_path / "results" / design_id / "tune_gpl" / "target_function.txt"
+    
     if report_file.exists():
         with open(report_file, "r") as f:
-            for line in f:
-                if "wns" in line.lower():
-                    try:
-                        wns = float(line.split()[-1])
-                    except ValueError:
-                        pass
-                if "tns" in line.lower():
-                    try:
-                        tns = float(line.split()[-1])
-                    except ValueError:
-                        pass
-    return {"wns": wns, "tns": tns}
+            try:
+                wns = float(f.read().strip())
+                return wns
+            except ValueError:
+                pass
+    return None
 
 def run_experiment(targets, params):
-    """Run bazelisk build on the targets with the given params."""
     cmd = ["bazelisk", "build"]
     for k, v in params.items():
         cmd.append(f"--define={k}={v}")
+    for k, v in params.items():
+        cmd.append(f"--action_env={k}={v}")
+        
     cmd.extend(targets)
     
     print(f"Running: {' '.join(cmd)}")
@@ -78,68 +55,102 @@ def run_experiment(targets, params):
         print(f"Build failed for params {params}")
         return None
         
-    results = {}
+    score = 0
+    valid = True
     for t in targets:
-        results[t] = parse_metrics(t)
-    return results
-
-def compute_best_params(all_results):
-    """Simple pareto-optimal/best selection based on average WNS."""
-    best_params = None
-    best_score = float('-inf')
-    
-    for run in all_results:
-        metrics = run["results"]
-        if not metrics:
-            continue
-            
-        score = 0
-        valid = True
-        for t, m in metrics.items():
-            if m["wns"] is None:
-                valid = False
-                break
-            score += m["wns"]  # Higher WNS (closer to 0 or positive) is better
-            
-        if valid and score > best_score:
-            best_score = score
-            best_params = run["params"]
-            
-    return best_params
+        wns = parse_metrics(t)
+        if wns is None:
+            valid = False
+            break
+        score += wns
+        
+    if valid:
+        return score / len(targets)
+    return None
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--campaign", choices=["smoke", "large"], default="smoke")
     parser.add_argument("--output", default="study_results.yaml")
     args = parser.parse_args()
     
-    targets = SMOKE_TARGETS if args.campaign == "smoke" else LARGE_TARGETS
+    print("Starting Phase 1: Broad search on small designs (15 minutes budget)")
     
-    keys, values = zip(*PARAM_GRID.items())
-    combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
+    study = optuna.create_study(direction="maximize")
     
-    all_results = []
+    start_time = time.time()
+    budget_phase1 = 15 * 60 # 15 minutes
     
-    for params in combinations:
-        metrics = run_experiment(targets, params)
-        all_results.append({
-            "params": params,
-            "results": metrics
-        })
+    def objective(trial):
+        wl_penalty = trial.suggest_float("GPL_WIRELENGTH_PENALTY", 0.01, 10.0, log=True)
+        timing_span = trial.suggest_float("GPL_TIMING_SPAN_CLOCK_PERCENT", 0.0, 0.5)
+        tighten_clock = trial.suggest_float("TIGHTEN_CLOCK_PERIOD", 0.0, 0.2)
         
-    best = compute_best_params(all_results)
+        params = {
+            "GPL_WIRELENGTH_PENALTY": wl_penalty,
+            "GPL_TIMING_SPAN_CLOCK_PERCENT": timing_span,
+            "TIGHTEN_CLOCK_PERIOD": tighten_clock
+        }
+        
+        score = run_experiment(SMALL_TARGETS, params)
+        if score is None:
+            raise optuna.exceptions.TrialPruned()
+            
+        return score
+        
+    study.optimize(objective, timeout=budget_phase1)
     
-    final_output = {
-        "campaign": args.campaign,
-        "best_parameters": best,
-        "all_results": all_results
-    }
+    print("Phase 1 complete. Best trial so far:")
+    print(study.best_trial)
+    
+    completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    completed_trials.sort(key=lambda t: t.value, reverse=True)
+    
+    print("\nStarting Phase 2: Detailed search on large designs (6 hours budget)")
+    budget_phase2 = 6 * 3600 # 6 hours
+    
+    if not completed_trials:
+        print("No completed trials from Phase 1. Exiting.")
+        return
+        
+    # Measure time for 1 sample
+    print("Measuring time for 1 sample on LARGE_TARGETS...")
+    sample_params = completed_trials[0].params
+    t0 = time.time()
+    run_experiment(LARGE_TARGETS, sample_params)
+    t1 = time.time()
+    time_per_sample = t1 - t0
+    
+    print(f"Time for 1 sample: {time_per_sample:.2f} seconds")
+    
+    if time_per_sample > 0:
+        N = int(budget_phase2 / time_per_sample)
+    else:
+        N = 1
+        
+    N = max(1, min(N, len(completed_trials)))
+    print(f"Budget allows for {N} samples. Taking top {N} candidates from Phase 1.")
+    
+    top_candidates = completed_trials[:N]
+    phase2_results = []
+    
+    best_phase2_params = None
+    best_phase2_score = float('-inf')
+    
+    for candidate in top_candidates:
+        print(f"Evaluating candidate: {candidate.params}")
+        score = run_experiment(LARGE_TARGETS, candidate.params)
+        
+        if score is not None:
+            phase2_results.append({"params": candidate.params, "score": score})
+            if score > best_phase2_score:
+                best_phase2_score = score
+                best_phase2_params = candidate.params
+                
+    print("\nStudy complete.")
+    print(f"Best overall parameters from Phase 2: {best_phase2_params} with score {best_phase2_score}")
     
     with open(args.output, "w") as f:
-        yaml.dump(final_output, f, default_flow_style=False)
-        
-    print(f"Study complete. Results saved to {args.output}")
-    print(f"Best parameters: {best}")
+        yaml.dump({"best_parameters": best_phase2_params, "score": best_phase2_score, "all_results": phase2_results}, f)
 
 if __name__ == "__main__":
     main()

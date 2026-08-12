@@ -1,7 +1,7 @@
 """BUILD boilerplate for flow/designs/."""
 
-load("@bazel-orfs//:openroad.bzl", "orfs_flow")
-load("@orfs_designs//:designs.bzl", "orfs_design")
+load("@bazel-orfs//:openroad.bzl", "orfs_flow", "orfs_run")
+load("@orfs_designs//:designs.bzl", "orfs_design", "DESIGNS")
 
 # Per filegroup target: extensions included in the filegroup.
 # bazel-orfs's config_mk_parser produces these target names from
@@ -78,6 +78,25 @@ def design(config = "config.mk", user_arguments = [], user_sources = [], local_a
         local_arguments = local_arguments,
         blender = True,
     )
+
+    pkg = native.package_name()
+    if pkg.startswith("flow/designs/"):
+        design_id = pkg[len("flow/designs/"):]
+        if design_id in DESIGNS:
+            design_args = DESIGNS[design_id]["arguments"]
+            design_name = design_id.split("/")[-1]
+            args_copy = {k: v for k, v in design_args.items()}
+            args_copy["FLOW_VARIANT"] = "tune_gpl"
+            orfs_run(
+                name = design_name + "_tune_gpl",
+                src = ":" + design_name + "_synth",
+                outs = [
+                    "results/{}/tune_gpl/target_function.txt".format(design_id),
+                ],
+                arguments = args_copy,
+                script = "//flow:scripts/place_only_and_measure.tcl",
+                variant = "tune_gpl",
+            )
 
 def files(group, extra_srcs = None):
     """Named filegroup over conventional extensions.
