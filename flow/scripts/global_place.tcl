@@ -25,6 +25,8 @@ set global_placement_args {}
 
 # Parameters for routability mode in global placement
 append_env_var global_placement_args GPL_ROUTABILITY_DRIVEN -routability_driven 0
+append_env_var global_placement_args GPL_WIRELENGTH_PENALTY -wirelength_penalty 0
+append_env_var global_placement_args GPL_TIMING_SPAN_CLOCK_PERCENT -timing_weight_span_clock_percent 0
 
 append_env_var global_placement_args GPL_RANDOM_SEED -random_seed 1
 

@@ -670,6 +670,18 @@ GPL_ROUTABILITY_DRIVEN:
   stages:
     - place
   default: 1
+GPL_WIRELENGTH_PENALTY:
+  description: |
+    Non-linear wirelength penalty exponent. 1.0 means no non-linear penalty.
+  stages:
+    - place
+  default: 1.0
+GPL_TIMING_SPAN_CLOCK_PERCENT:
+  description: |
+    Span of slacks relative to the clock period to reweight. Negative means use legacy RePlAce behavior.
+  stages:
+    - place
+  default: -1.0
 GPL_KEEP_OVERFLOW:
   description: >
     Passed as -keep_resize_below_overflow to global_placement.
