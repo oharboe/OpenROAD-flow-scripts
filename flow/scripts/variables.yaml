@@ -669,13 +669,13 @@ GPL_WIRELENGTH_PENALTY:
     Global placement wirelength penalty (passed as -init_wirelength_coef or similar logic).
   stages:
     - place
-  default: 1.352
+  default: 0.0627
 GPL_TIMING_SPAN_CLOCK_PERCENT:
   description: |
     Global placement timing weight span as a percent of clock (passed to virtual_cts_max_skew_fraction or similar logic).
   stages:
     - place
-  default: 0.322
+  default: 0.240
 GPL_ROUTABILITY_DRIVEN:
   description: |
     Specifies whether the placer should use routability driven placement.
@@ -1661,4 +1661,4 @@ TIGHTEN_CLOCK_PERIOD:
     Tighten the clock period by this fraction (e.g. 0.1 for 10%) before measuring minimum clock period. Used by the autotuner.
   stages:
     - place
-  default: 0.007
+  default: 0.0638
