@@ -18,7 +18,7 @@ _GROUPS = {
 # cross-package references resolve. Kept tight on purpose: globbing "*"
 # silently exposes LICENSE/.gitignore/etc. as the public API surface.
 # gds/gds.gz are inputs in hierarchical flows via ADDITIONAL_GDS.
-_EXPORTED_EXTS = ["v", "sv", "svh", "tcl", "sdc", "def", "cfg", "lef", "lib", "gds", "gds.gz"]
+_EXPORTED_EXTS = ["v", "sv", "svh", "tcl", "sdc", "def", "cfg", "lef", "lib", "gds", "gds.gz", "memories"]
 
 _EXPORTS_SENTINEL = "_orfs_design_exports_sentinel"
 
@@ -84,14 +84,25 @@ def design(config = "config.mk", user_arguments = [], user_sources = [], local_a
         design_id = pkg[len("flow/designs/"):]
         if design_id in DESIGNS:
             design_args = DESIGNS[design_id]["arguments"]
-            design_name = design_id.split("/")[-1]
-            args_copy = {k: v for k, v in design_args.items()}
-            args_copy["FLOW_VARIANT"] = "tune_gpl"
-            orfs_run(
-                name = design_name + "_tune_gpl",
-                src = ":" + design_name + "_synth",
+            # Find the actual synth target name instantiated by orfs_design
+            synth_name = None
+            for rule_name in native.existing_rules().keys():
+                if rule_name.endswith("_synth"):
+                    synth_name = rule_name
+                    break
+            
+            if synth_name:
+                design_name = synth_name[:-6] # Remove "_synth"
+                args_copy = {k: v for k, v in design_args.items()}
+                args_copy["FLOW_VARIANT"] = "tune_gpl"
+                platform = args_copy.get("PLATFORM", design_id.split('/')[0])
+                real_design_name = args_copy.get("DESIGN_NAME", design_name)
+                orfs_run(
+                    name = design_name + "_tune_gpl",
+                    src = ":" + synth_name,
+                    data = [":design_config"],
                 outs = [
-                    "results/{}/tune_gpl/target_function.txt".format(design_id),
+                    "results/{}/{}/tune_gpl/target_function.txt".format(platform, real_design_name),
                 ],
                 arguments = args_copy,
                 script = "//flow:scripts/place_only_and_measure.tcl",

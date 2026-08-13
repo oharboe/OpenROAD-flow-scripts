@@ -16,19 +16,21 @@ SMALL_TARGETS = [
 
 # Large designs for detailed search
 LARGE_TARGETS = [
-    "//flow/designs/sky130hd/ibex:ibex_core_tune_gpl",
     "//flow/designs/sky130hd/jpeg:jpeg_encoder_tune_gpl",
     "//flow/designs/sky130hd/riscv32i:riscv_tune_gpl",
-    "//flow/designs/asap7/mock_array:mock_array_tune_gpl",
-    "//flow/designs/asap7/rocket:RocketTile_tune_gpl"
+    "//flow/designs/asap7/mock-cpu:mock_cpu_tune_gpl"
 ]
 
 def parse_metrics(target_label):
     pkg, name = target_label.split(":")
     pkg_path = pkg.replace("//", "")
     
-    design_id = pkg_path.replace("flow/designs/", "")
-    report_file = Path("bazel-bin") / pkg_path / "results" / design_id / "tune_gpl" / "target_function.txt"
+    platform = pkg_path.split("/")[-2]
+    # The target name is e.g. "jpeg_encoder_tune_gpl"
+    design_name = name.replace("_tune_gpl", "")
+    
+    workspace_dir = os.environ.get("BUILD_WORKSPACE_DIRECTORY", ".")
+    report_file = Path(workspace_dir) / "bazel-bin" / pkg_path / "results" / platform / design_name / "tune_gpl" / "target_function.txt"
     
     if report_file.exists():
         with open(report_file, "r") as f:
@@ -49,7 +51,8 @@ def run_experiment(targets, params):
     cmd.extend(targets)
     
     print(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    workspace_dir = os.environ.get("BUILD_WORKSPACE_DIRECTORY", ".")
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=workspace_dir)
     
     if result.returncode != 0:
         print(f"Build failed for params {params}")
@@ -149,7 +152,9 @@ def main():
     print("\nStudy complete.")
     print(f"Best overall parameters from Phase 2: {best_phase2_params} with score {best_phase2_score}")
     
-    with open(args.output, "w") as f:
+    workspace_dir = os.environ.get("BUILD_WORKSPACE_DIRECTORY", ".")
+    output_path = Path(workspace_dir) / args.output
+    with open(output_path, "w") as f:
         yaml.dump({"best_parameters": best_phase2_params, "score": best_phase2_score, "all_results": phase2_results}, f)
 
 if __name__ == "__main__":

@@ -3,6 +3,13 @@
 set ::env(KEEP_VARS) 1
 set ::env(WRITE_ODB_AND_SDC_EACH_STAGE) 0
 
+if { [info exists ::env(ODB_FILE)] } {
+  set odb_path $::env(ODB_FILE)
+  set sdc_path [file rootname $odb_path].sdc
+  file copy -force $odb_path $::env(RESULTS_DIR)/1_synth.odb
+  file copy -force $sdc_path $::env(RESULTS_DIR)/1_synth.sdc
+}
+
 set ::flow_expected [glob -nocomplain -directory $::env(RESULTS_DIR) *.odb *.sdc]
 
 proc flow_source { script } {
@@ -15,7 +22,7 @@ proc flow_source { script } {
 }
 
 # Run the flow up to place
-flow_source synth_odb.tcl
+
 flow_source floorplan.tcl
 flow_source macro_place.tcl
 flow_source tapcell.tcl

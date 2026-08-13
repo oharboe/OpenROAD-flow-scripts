@@ -10,7 +10,7 @@ if { [info exists ::env(TIGHTEN_CLOCK_PERIOD)] } {
 }
 
 estimate_parasitics -placement
-set wns [sta::time_return [sta::worst_slack -max]]
+set wns [sta::time_sta_ui [sta::worst_slack_cmd "max"]]
 puts "Target Function WNS: $wns"
 
 set f [open [file join $::env(RESULTS_DIR) "target_function.txt"] w]
