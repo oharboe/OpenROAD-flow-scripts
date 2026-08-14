@@ -10,8 +10,8 @@ except ImportError:
     sys.exit(1)
 
 import matplotlib
-matplotlib.use('Qt5Agg')
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+matplotlib.use('qtagg')
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 class PandasModel(QAbstractTableModel):
@@ -43,6 +43,8 @@ class PandasModel(QAbstractTableModel):
 class QoRPlotter(QMainWindow):
     def __init__(self, csv_file):
         super().__init__()
+        self.csv_file = csv_file
+        self.pdk = "asap7" if "asap7" in csv_file.lower() else "sky130hd"
         self.setWindowTitle(f"QoR Path Correlation Debugger - {os.path.basename(csv_file)}")
         self.df = pd.read_csv(csv_file)
         
@@ -52,26 +54,41 @@ class QoRPlotter(QMainWindow):
         
         # Controls
         ctrl_layout = QHBoxLayout()
-        self.x_axis_cb = QComboBox()
-        self.y_axis_cb = QComboBox()
+        self.x_stage_cb = QComboBox()
+        self.y_stage_cb = QComboBox()
+        self.metric_cb = QComboBox()
         
-        numeric_cols = self.df.select_dtypes(include=['float64', 'int64']).columns
-        self.x_axis_cb.addItems(numeric_cols)
-        self.y_axis_cb.addItems(numeric_cols)
+        stages = ["3_place", "5_grt", "6_route"]
+        allowed_metrics = ["min_clk_period", "net_delay", "logic_delay", "total_cap", "buffers"]
+        
+        metrics = set()
+        for col in self.df.select_dtypes(include=['float64', 'int64']).columns:
+            for stage in stages:
+                if col.startswith(f"{stage}_"):
+                    m = col[len(f"{stage}_"):]
+                    if m in allowed_metrics:
+                        metrics.add(m)
+        
+        self.x_stage_cb.addItems(stages)
+        self.y_stage_cb.addItems(stages)
+        self.metric_cb.addItems(sorted(list(metrics)))
         
         # Try to set sensible defaults
-        slack_cols = [c for c in numeric_cols if 'slack' in c]
-        if len(slack_cols) >= 2:
-            self.x_axis_cb.setCurrentText(slack_cols[0])
-            self.y_axis_cb.setCurrentText(slack_cols[-1])
+        self.x_stage_cb.setCurrentText("5_grt")
+        self.y_stage_cb.setCurrentText("6_route")
+        if "min_clk_period" in metrics:
+            self.metric_cb.setCurrentText("min_clk_period")
             
-        self.x_axis_cb.currentTextChanged.connect(self.update_plot)
-        self.y_axis_cb.currentTextChanged.connect(self.update_plot)
+        self.x_stage_cb.currentTextChanged.connect(self.update_plot)
+        self.y_stage_cb.currentTextChanged.connect(self.update_plot)
+        self.metric_cb.currentTextChanged.connect(self.update_plot)
         
-        ctrl_layout.addWidget(QLabel("X-Axis:"))
-        ctrl_layout.addWidget(self.x_axis_cb)
-        ctrl_layout.addWidget(QLabel("Y-Axis:"))
-        ctrl_layout.addWidget(self.y_axis_cb)
+        ctrl_layout.addWidget(QLabel("X-Axis Stage:"))
+        ctrl_layout.addWidget(self.x_stage_cb)
+        ctrl_layout.addWidget(QLabel("Y-Axis Stage:"))
+        ctrl_layout.addWidget(self.y_stage_cb)
+        ctrl_layout.addWidget(QLabel("Metric:"))
+        ctrl_layout.addWidget(self.metric_cb)
         layout.addLayout(ctrl_layout)
         
         # Plot
@@ -89,26 +106,51 @@ class QoRPlotter(QMainWindow):
         self.update_plot()
         
     def update_plot(self):
-        self.ax.clear()
-        x_col = self.x_axis_cb.currentText()
-        y_col = self.y_axis_cb.currentText()
-        
-        if x_col and y_col:
-            x_data = self.df[x_col]
-            y_data = self.df[y_col]
-            self.ax.scatter(x_data, y_data, alpha=0.5)
+        if self.df is None or self.df.empty:
+            return
             
-            # Diagonal line
+        x_stage = self.x_stage_cb.currentText()
+        y_stage = self.y_stage_cb.currentText()
+        metric = self.metric_cb.currentText()
+        
+        x_col = f"{x_stage}_{metric}"
+        y_col = f"{y_stage}_{metric}"
+        
+        if x_col not in self.df.columns or y_col not in self.df.columns:
+            return
+            
+        valid_df = self.df[[x_col, y_col]].dropna()
+        x_data = valid_df[x_col]
+        y_data = valid_df[y_col]
+        
+        self.ax.clear()
+        self.ax.scatter(x_data, y_data, alpha=0.5)
+        
+        self.csv_file = csv_file
+        self.pdk = "asap7" if "asap7" in csv_file.lower() else "sky130hd"
+        
+        # Unit label
+        unit_str = ""
+        if "clk_period" in metric or "delay" in metric:
+            if "asap7" in self.pdk:
+                unit_str = " (ps)"
+            else:
+                unit_str = " (ns)"
+        elif "cap" in metric:
+            unit_str = " (fF)"
+            
+        # Diagonal line
+        if not x_data.empty and not y_data.empty:
             min_val = min(x_data.min(), y_data.min())
             max_val = max(x_data.max(), y_data.max())
             self.ax.plot([min_val, max_val], [min_val, max_val], 'r--')
             
-            self.ax.set_xlabel(x_col)
-            self.ax.set_ylabel(y_col)
-            self.ax.grid(True)
-            self.ax.set_title(f"Correlation: {x_col} vs {y_col}")
-            self.fig.tight_layout()
-            self.canvas.draw()
+        self.ax.set_xlabel(f"{x_col}{unit_str}")
+        self.ax.set_ylabel(f"{y_col}{unit_str}")
+        self.ax.grid(True)
+        self.ax.set_title(f"Correlation: {x_col} vs {y_col}")
+        self.fig.tight_layout()
+        self.canvas.draw()
 
 def build_and_extract_data(pdk, design):
     print(f"Building and extracting path data for {pdk} {design}...")
@@ -132,15 +174,26 @@ def build_and_extract_data(pdk, design):
         print(f"Error: Build failed for {pdk} {design}.")
         sys.exit(1)
         
-    # Aggregate
+    reports_dir = os.path.join(cwd, "bazel-bin", "flow", "designs", pdk, design, "reports", pdk, design, "base")
     try:
-        df3 = pd.read_csv(os.path.join(dump_dir, "3_place_timing_paths.csv"))
-        df5 = pd.read_csv(os.path.join(dump_dir, "5_grt_timing_paths.csv"))
-        df6 = pd.read_csv(os.path.join(dump_dir, "6_route_timing_paths.csv"))
+        df3 = pd.read_csv(os.path.join(reports_dir, "3_place_timing_paths.csv"))
+        df5 = pd.read_csv(os.path.join(reports_dir, "5_grt_timing_paths.csv"))
+        df6 = pd.read_csv(os.path.join(reports_dir, "6_route_timing_paths.csv"))
     except Exception as e:
         print(f"Error reading CSVs: {e}")
         sys.exit(1)
         
+    def get_worst_paths(df, stage_prefix):
+        if f'{stage_prefix}_min_clk_period' in df.columns:
+            df = df.sort_values(f'{stage_prefix}_min_clk_period', ascending=False)
+        elif f'{stage_prefix}_slack' in df.columns:
+            df = df.sort_values(f'{stage_prefix}_slack', ascending=True)
+        return df.drop_duplicates(subset=['startpoint', 'endpoint'], keep='first')
+        
+    df3 = get_worst_paths(df3, "3_place")
+    df5 = get_worst_paths(df5, "5_grt")
+    df6 = get_worst_paths(df6, "6_route")
+    
     df_merged = df3.merge(df5, on=['startpoint', 'endpoint'], how='outer')
     df_merged = df_merged.merge(df6, on=['startpoint', 'endpoint'], how='outer')
     
@@ -150,28 +203,44 @@ def build_and_extract_data(pdk, design):
     return out_csv
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
+    import argparse
+    parser = argparse.ArgumentParser(description="QoR Correlation Plotter")
+    parser.add_argument('csv_file', nargs='?', help='Merged CSV file or design name')
+    parser.add_argument('--design', help='Design platform/variant name, e.g., sky130hd/gcd')
     
-    csv_file = None
-    if len(sys.argv) < 2:
-        # Build for both pdks
-        csv_sky130 = build_and_extract_data("sky130hd", "gcd")
-        csv_asap7 = build_and_extract_data("asap7", "gcd")
+    args = parser.parse_args()
+    
+    csv_file = args.csv_file
+    if args.design:
+        parts = args.design.strip('/').split('/')
+        if len(parts) == 2:
+            pdk, design = parts
+        else:
+            pdk, design = "sky130hd", parts[0]
+        csv_file = build_and_extract_data(pdk, design)
+    elif csv_file and '/' in csv_file and not csv_file.endswith('.csv'):
+        parts = csv_file.strip('/').split('/')
+        if len(parts) == 2:
+            pdk, design = parts
+        else:
+            pdk, design = "sky130hd", parts[0]
+        csv_file = build_and_extract_data(pdk, design)
+    elif csv_file:
+        build_dir = os.environ.get("BUILD_WORKING_DIRECTORY", os.getcwd())
+        if not os.path.isabs(csv_file):
+            if os.path.exists(csv_file):
+                csv_file = os.path.abspath(csv_file)
+            elif os.path.exists(os.path.join(build_dir, csv_file)):
+                csv_file = os.path.abspath(os.path.join(build_dir, csv_file))
+    elif not csv_file:
+        csv_file = build_and_extract_data("sky130hd", "gcd")
         
-        # Combine them or just open sky130 by default and let user know
-        # For simplicity, let's open sky130 and asap7 in different windows
-        w1 = QoRPlotter(csv_sky130)
-        w1.resize(1000, 800)
-        w1.show()
+    if not csv_file or not os.path.exists(csv_file):
+        print("Error: Could not locate or build CSV data file.")
+        sys.exit(1)
         
-        w2 = QoRPlotter(csv_asap7)
-        w2.resize(1000, 800)
-        w2.show()
-        
-        sys.exit(app.exec())
-    else:
-        csv_file = sys.argv[1]
-        window = QoRPlotter(csv_file)
-        window.resize(1000, 800)
-        window.show()
-        sys.exit(app.exec())
+    app = QApplication(sys.argv)
+    window = QoRPlotter(csv_file)
+    window.resize(1000, 800)
+    window.show()
+    sys.exit(app.exec())
