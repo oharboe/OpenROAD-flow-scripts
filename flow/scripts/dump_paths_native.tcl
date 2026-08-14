@@ -88,13 +88,20 @@ foreach path_end $paths {
         }
     }
     
-    # Convert seconds to delay units (ns for values > 1e-11, ps for values <= 1e-11 / asap7)
+    # Convert seconds to delay units (ps for asap7, ns for sky130hd)
+    set is_asap7 0
+    if {[info exists ::env(DESIGN_PLATFORM)] && [string match "*asap7*" $::env(DESIGN_PLATFORM)]} {
+        set is_asap7 1
+    } elseif {[string match "*asap7*" $out_file]} {
+        set is_asap7 1
+    }
+    
     if {$min_clk_period < 1e-4} {
-        if {[string match "*asap7*" $stage_prefix] || $datapath_delay > 10.0} {
-            # asap7 OpenSTA reports in ps directly
+        if {$is_asap7} {
+            # asap7 is in ps
             set min_clk_period [expr {$min_clk_period * 1e12}]
         } else {
-            # sky130hd OpenSTA reports in ns
+            # sky130hd is in ns
             set min_clk_period [expr {$min_clk_period * 1e9}]
         }
     }

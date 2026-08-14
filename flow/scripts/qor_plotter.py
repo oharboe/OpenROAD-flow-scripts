@@ -140,9 +140,9 @@ class QoRPlotter(QMainWindow):
             unit_str = " (fF)"
             
         # Diagonal line
-        if not x_data.empty and not y_data.empty:
-            min_val = min(x_data.min(), y_data.min())
-            max_val = max(x_data.max(), y_data.max())
+        if len(x_data) > 0 and len(y_data) > 0:
+            min_val = float(min(x_data.min(), y_data.min()))
+            max_val = float(max(x_data.max(), y_data.max()))
             self.ax.plot([min_val, max_val], [min_val, max_val], 'r--')
             
         self.ax.set_xlabel(f"{x_col}{unit_str}")
