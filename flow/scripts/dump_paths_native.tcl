@@ -28,10 +28,14 @@ foreach path_end $paths {
     set startpoint [get_name $start_pin]
     set endpoint [get_name $end_pin]
     
-    # Calculate min_clk_period = clock_period - slack
-    # Using clock period from endpoint clock or default to (1.1ns - slack) converted
-    set clk_period 1.1e-9
-    set min_clk_period [expr {$clk_period - $slack}]
+    # Get clock period from active clocks or default to datapath arrival if no clocks
+    set clocks [all_clocks]
+    if {[llength $clocks] > 0} {
+        set clk_period [[lindex $clocks 0] period]
+        set min_clk_period [expr {$clk_period - $slack}]
+    } else {
+        set min_clk_period [$path arrival]
+    }
     
     # Redirect standard report output to string for precise table parsing
     utl::redirectStringBegin
@@ -84,9 +88,15 @@ foreach path_end $paths {
         }
     }
     
-    # Convert seconds to nanoseconds if values are in scientific notation (OpenSTA default unit seconds)
+    # Convert seconds to delay units (ns for values > 1e-11, ps for values <= 1e-11 / asap7)
     if {$min_clk_period < 1e-4} {
-        set min_clk_period [expr {$min_clk_period * 1e9}]
+        if {[string match "*asap7*" $stage_prefix] || $datapath_delay > 10.0} {
+            # asap7 OpenSTA reports in ps directly
+            set min_clk_period [expr {$min_clk_period * 1e12}]
+        } else {
+            # sky130hd OpenSTA reports in ns
+            set min_clk_period [expr {$min_clk_period * 1e9}]
+        }
     }
     
     puts $fp "$startpoint,$endpoint,$min_clk_period,$net_delay,$logic_delay,$total_cap,$buffers"
