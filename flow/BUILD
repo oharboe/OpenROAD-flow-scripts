@@ -242,3 +242,23 @@ py_binary(
     ],
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "aggregate_path_data",
+    srcs = ["scripts/aggregate_path_data.py"],
+    deps = [
+        "@orfs-pip//pandas",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "qor_plotter",
+    srcs = ["scripts/qor_plotter.py"],
+    deps = [
+        "@orfs-pip//pandas",
+        "@orfs-pip//pyside6",
+        "@orfs-pip//matplotlib",
+    ],
+    visibility = ["//visibility:public"],
+)
