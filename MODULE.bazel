@@ -7,7 +7,7 @@ module(
 
 # --- Regular dependencies (propagated to downstream consumers) ---
 
-bazel_dep(name = "rules_python", version = "1.8.5")
+bazel_dep(name = "rules_python", version = "2.0.0")
 bazel_dep(name = "rules_shell", version = "0.6.1")
 
 # --- Dev dependencies (only honoured when @orfs is the root module) ---
@@ -77,6 +77,25 @@ git_override(
     module_name = "qt-bazel",
     commit = "886104974c2fd72439f2c33b5deebf0fe4649df7",
     remote = "https://github.com/The-OpenROAD-Project/qt_bazel_prebuilts",
+)
+
+# icu is transitive (qt-bazel -> icu). The BCR overlay patches
+# u_getDataDirectory() to locate icudt*.dat via
+# rules_cc::cc::runfiles::Runfiles::Rlocation(), but Runfiles::Create()
+# returns nullptr whenever no runfiles tree is reachable and the overlay
+# dereferences it unconditionally. A binary that a bazel/install.sh-style
+# step copies out of bazel-bin loses its .runfiles directory, so the first
+# locale-aware compare (QCollator, std::locale, ...) anywhere in the process
+# segfaults -- e.g. QFileDialog listing a directory, or a sortable Qt list/
+# table. Mirrors tools/OpenROAD's fixed-version override (single_version_
+# override is root-honored only); drop when tools/OpenROAD drops its copy.
+single_version_override(
+    module_name = "icu",
+    patch_strip = 1,
+    patches = [
+        "//patches/icu:0001-putil-null-check-bazel-runfiles-before-dereference.patch",
+    ],
+    version = "76.1.bcr.3",
 )
 
 # Exception to the dev-only rule above: flow/BUILD has
@@ -162,6 +181,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
     hub_name = "orfs-pip",
     python_version = "3.13",
+    quiet = True,
     requirements_lock = "//flow:util/requirements_lock.txt",
 )
 use_repo(pip, "orfs-pip")
