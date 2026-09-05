@@ -1,14 +1,24 @@
 {
+    "synth__canonical_netlist__hash": {
+        "value": "36f3c36cd459164f6da315e618d393acea91e7e2",
+        "compare": "==",
+        "level": "warning"
+    },
+    "synth__netlist__hash": {
+        "value": "f63e9e36bbd116adf58e1a8fd7de74c0f2064bea",
+        "compare": "==",
+        "level": "warning"
+    },
     "synth__design__instance__area__stdcell": {
         "value": 2430.0,
         "compare": "<="
     },
     "constraints__clocks__count": {
-        "value": 1,
+        "value": 2,
         "compare": "=="
     },
     "placeopt__design__instance__area": {
-        "value": 2680,
+        "value": 2673,
         "compare": "<="
     },
     "placeopt__design__instance__count__stdcell": {
@@ -28,11 +38,11 @@
         "compare": "<="
     },
     "cts__timing__setup__ws": {
-        "value": -79.4,
+        "value": -50.0,
         "compare": ">="
     },
     "cts__timing__setup__tns": {
-        "value": -1630.0,
+        "value": -200.0,
         "compare": ">="
     },
     "cts__timing__hold__ws": {
@@ -48,11 +58,11 @@
         "compare": "<="
     },
     "globalroute__timing__setup__ws": {
-        "value": -75.9,
+        "value": -51.1,
         "compare": ">="
     },
     "globalroute__timing__setup__tns": {
-        "value": -451.0,
+        "value": -208.0,
         "compare": ">="
     },
     "globalroute__timing__hold__ws": {
@@ -64,7 +74,7 @@
         "compare": ">="
     },
     "detailedroute__route__wirelength": {
-        "value": 99315,
+        "value": 98982,
         "compare": "<="
     },
     "detailedroute__route__drc_errors": {
@@ -80,11 +90,11 @@
         "compare": "<="
     },
     "finish__timing__setup__ws": {
-        "value": -52.5,
+        "value": -50.0,
         "compare": ">="
     },
     "finish__timing__setup__tns": {
-        "value": -205.0,
+        "value": -436.0,
         "compare": ">="
     },
     "finish__timing__hold__ws": {
@@ -96,7 +106,7 @@
         "compare": ">="
     },
     "finish__design__instance__area": {
-        "value": 2816,
+        "value": 2761,
         "compare": "<="
     }
 }
