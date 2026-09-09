@@ -255,8 +255,12 @@ memory:
 #-------------------------------------------------------------------------------
 
 $(SDC_FILE_CLOCK_PERIOD): $(SDC_FILE)
-	mkdir -p $(dir $@)
-	echo $(ABC_CLOCK_PERIOD_IN_PS) > $@
+	$(UNSET_AND_MAKE) do-sdc-clock-period
+
+.PHONY: do-sdc-clock-period
+do-sdc-clock-period:
+	mkdir -p $(dir $(SDC_FILE_CLOCK_PERIOD))
+	echo $(ABC_CLOCK_PERIOD_IN_PS) > $(SDC_FILE_CLOCK_PERIOD)
 
 .PHONY: yosys-dependencies
 yosys-dependencies: $(YOSYS_DEPENDENCIES)
@@ -762,6 +766,7 @@ ifneq ($(KLAYOUT_LVS_FILE),)
 	$(RUN_CMD) --log $(abspath $(LOG_DIR)/6_lvs.log) --tee -- \
 	        $(SCRIPTS_DIR)/klayout.sh -b -rd in_gds="$<" \
 	        -rd cdl_file=$(abspath $(OBJECTS_DIR)/6_final_concat.cdl) \
+	        -rd top_cell="$(DESIGN_NAME)" \
 	        -rd report_file=$(abspath $@) \
 	        -r $(KLAYOUT_LVS_FILE)
 else
