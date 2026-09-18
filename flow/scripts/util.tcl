@@ -45,6 +45,13 @@ proc repair_timing_helper { args } {
   log_cmd repair_timing {*}$additional_args
 }
 
+# Every detailed_placement in the flow goes through here, so the design's
+# DETAIL_PLACEMENT_ARGS (the legalizer and its window, say) apply to the
+# placement stage and to every re-legalization after it alike.
+proc detailed_placement_helper { args } {
+  log_cmd detailed_placement {*}[env_var_or_empty DETAIL_PLACEMENT_ARGS] {*}$args
+}
+
 proc repair_design_helper { } {
   puts "Perform buffer insertion and gate resizing..."
 
@@ -267,8 +274,8 @@ proc source_env_var_if_exists { env_var } {
 # will be default and this code will be deleted.
 proc hier_options { } {
   if {
-    ([env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] ||
-      [env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]) &&
+    ([env_var_equals SYNTH_WRAPPED_OPERATORS 1] ||
+      [env_var_equals SWAP_ARITH_OPERATORS 1]) &&
     !$::env(OPENROAD_HIERARCHICAL)
   } {
     error "SYNTH_WRAPPED_OPERATORS or SWAP_ARITH_OPERATORS require OPENROAD_HIERARCHICAL to be set."
