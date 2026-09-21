@@ -404,7 +404,11 @@ floorplan_to_place: $(RESULTS_DIR)/1_synth.odb $(RESULTS_DIR)/1_synth.sdc
 
 # ==============================================================================
 
+ifeq ($(SYNTH_USE_SYN),1)
+$(eval $(call do-step,1_synth,$(VERILOG_FILES) $(SDC_FILE) $(TECH_LEF) $(SC_LEF) $(ADDITIONAL_LEFS) $(LIB_FILES),synth_syn))
+else
 $(eval $(call do-step,1_synth,$(RESULTS_DIR)/1_2_yosys.v $(RESULTS_DIR)/1_2_yosys.sdc $(TECH_LEF) $(SC_LEF) $(ADDITIONAL_LEFS) $(LIB_FILES),synth_odb))
+endif
 
 $(RESULTS_DIR)/1_synth.sdc: $(RESULTS_DIR)/1_synth.odb
 
@@ -473,17 +477,13 @@ $(eval $(call do-step,3_5_place_dp,$(RESULTS_DIR)/3_4_place_resized.odb,detail_p
 
 $(eval $(call do-copy,3_place,3_5_place_dp.odb,))
 
-$(eval $(call do-copy,3_place,2_floorplan.sdc,,.sdc))
+# detail_place writes 3_place.sdc alongside 3_5_place_dp.odb (constraints
+# are unchanged during placement), mirroring how synth writes 1_synth.sdc.
+$(RESULTS_DIR)/3_place.sdc: $(RESULTS_DIR)/3_5_place_dp.odb
 
 .PHONY: do-place
 do-place:
-	$(UNSET_AND_MAKE) do-3_1_place_gp_skip_io do-3_2_place_iop do-3_3_place_gp do-3_4_place_resized do-3_5_place_dp do-3_place do-3_place.sdc
-
-# Custom repair_timing target after placement  
-$(eval $(call do-step,3_6_place_repair_timing,$(RESULTS_DIR)/3_5_place_dp.odb $(RESULTS_DIR)/3_place.sdc,repair_timing_post_place))  
-  
-.PHONY: place_repair_timing  
-place_repair_timing: $(RESULTS_DIR)/3_6_place_repair_timing.odb
+	$(UNSET_AND_MAKE) do-3_1_place_gp_skip_io do-3_2_place_iop do-3_3_place_gp do-3_4_place_resized do-3_5_place_dp do-3_place
 
 # Clean Targets
 #-------------------------------------------------------------------------------
@@ -616,9 +616,11 @@ $(eval $(call do-step,6_1_fill,$(RESULTS_DIR)/5_route.odb $(RESULTS_DIR)/5_route
 
 $(eval $(call do-copy,6_1_fill,5_route.sdc,,.sdc))
 
-$(eval $(call do-copy,6_final,5_route.sdc,,.sdc))
-
 $(eval $(call do-step,6_report,$(RESULTS_DIR)/6_1_fill.odb $(RESULTS_DIR)/6_1_fill.sdc,final_report,.log,$(LOG_DIR)))
+
+# final_report writes 6_final.sdc alongside 6_final.odb (constraints are
+# unchanged during finishing), mirroring how synth writes 1_synth.sdc.
+$(RESULTS_DIR)/6_final.sdc: $(LOG_DIR)/6_report.log
 
 $(RESULTS_DIR)/6_final.def: $(LOG_DIR)/6_report.log
 
@@ -632,7 +634,7 @@ final: finish
 
 .PHONY: do-finish
 do-finish:
-	$(UNSET_AND_MAKE) do-6_1_fill do-6_1_fill.sdc do-6_final.sdc do-6_report elapsed
+	$(UNSET_AND_MAKE) do-6_1_fill do-6_1_fill.sdc do-6_report elapsed
 
 .PHONY: generate_abstract
 generate_abstract: $(RESULTS_DIR)/6_final.gds $(RESULTS_DIR)/6_final.def  $(RESULTS_DIR)/6_final.v $(RESULTS_DIR)/6_final.sdc
@@ -675,7 +677,7 @@ $(WRAPPED_GDSOAS): $(OBJECTS_DIR)/klayout_wrap.lyt $(WRAPPED_LEFS)
 
 # Merge GDS using Klayout
 #-------------------------------------------------------------------------------
-$(GDS_MERGED_FILE): check-klayout $(RESULTS_DIR)/6_final.def $(OBJECTS_DIR)/klayout.lyt $(GDSOAS_FILES) $(WRAPPED_GDSOAS) $(SEAL_GDSOAS)
+$(GDS_MERGED_FILE): $(RESULTS_DIR)/6_final.def $(OBJECTS_DIR)/klayout.lyt $(GDSOAS_FILES) $(WRAPPED_GDSOAS) $(SEAL_GDSOAS) | check-klayout
 	$(UNSET_AND_MAKE) do-gds-merged
 
 .PHONY: do-gds-merged
@@ -841,7 +843,7 @@ klayout:
 .phony: run
 run:
 	@mkdir -p $(RESULTS_DIR) $(LOG_DIR) $(REPORTS_DIR) $(OBJECTS_DIR)
-	($(OPENROAD_CMD) -no_splash $(if $(filter %.py,$(RUN_SCRIPT)),-python) $(RUN_SCRIPT) 2>&1 | tee $(abspath $(LOG_DIR)/$(RUN_LOG_NAME_STEM).log))
+	$(RUN_CMD) --log $(abspath $(LOG_DIR)/$(RUN_LOG_NAME_STEM).log) --tee -- $(OPENROAD_CMD) -no_splash $(if $(filter %.py,$(RUN_SCRIPT)),-python) $(RUN_SCRIPT)
 
 export RUN_YOSYS_ARGS ?= -c $(SCRIPTS_DIR)/yosys_keep.tcl
 .phony: run-yosys
