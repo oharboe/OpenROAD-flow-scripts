@@ -24,7 +24,6 @@ ENV PATH="/usr/local/bin/wrapped-cc:$PATH"
 
 COPY --link tools tools
 ARG numThreads=$(nproc)
-ARG openroadVersion=NotSet
 ARG verificPath=""
 
 RUN <<EOF
@@ -38,12 +37,24 @@ fi
 ./build_openroad.sh --no_init \
                     --local \
                     --threads ${numThreads} \
-                    --openroad-args -DOPENROAD_VERSION=${openroadVersion} \
                     ${verificArgs}
 if [ -n "${verificPath}" ]; then
     rm -rf "${verificPath}"
 fi
 EOF
+
+# Collect LICENSE files from tool source trees into the install directory so
+# they are available in the final image. tools/OpenROAD/src/sta is excluded
+# because it is covered by a separate commercial license agreement.
+RUN find /OpenROAD-flow-scripts/tools \( -name "*LICENSE*" -o -name "*LICENSES*" \) \
+    | grep -v '/OpenROAD/src/sta/' \
+    | grep -v '/AutoTuner/' \
+    | grep -v '^/OpenROAD-flow-scripts/tools/install/' \
+    | while IFS= read -r f; do \
+        rel="${f#/OpenROAD-flow-scripts/tools/}"; \
+        mkdir -p "/OpenROAD-flow-scripts/tools/install/licenses/$(dirname "$rel")"; \
+        cp -r "$f" "/OpenROAD-flow-scripts/tools/install/licenses/$rel"; \
+    done
 
 FROM orfs-base
 
