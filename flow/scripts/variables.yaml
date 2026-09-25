@@ -627,9 +627,15 @@ CELL_PAD_IN_SITES_GLOBAL_PLACEMENT:
   tunable: 1
 DETAIL_PLACEMENT_ARGS:
   description: >
-    Specify arguments to the detailed_placement call during placement.
+    Specify arguments to every detailed_placement call: the one in placement
+    and the re-legalizations after clock tree synthesis, after repair in
+    CTS and after the repairs in global route. A legalizer chosen here
+    (-use_diamond_legalizer, -max_displacement) is therefore the one every
+    stage uses.
   stages:
     - place
+    - cts
+    - grt
 CELL_PAD_IN_SITES_DETAIL_PLACEMENT:
   description: >
     Cell padding on both sides in site widths to ease routability in detail
@@ -1544,15 +1550,6 @@ FLOW_VARIANT:
   description: >
     Flow variant to use, used in the flow variant directory name.
   default: base
-RULES_JSON:
-  description: >
-    json files with the metrics baseline regression rules.
-    In the ORFS Makefile, this defaults to $DESIGN_DIR/rules-base.json,
-    but ORFS does not mandate the users source directory layout and
-    this can be placed elsewhere when the user sets up an ORFS
-    config.mk or from bazel-orfs.
-  stages:
-    - test
 SKIP_ANTENNA_REPAIR_PRE_GRT:
   default: 0
   description: >

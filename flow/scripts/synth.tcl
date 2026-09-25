@@ -143,6 +143,11 @@ if {
   synth -flatten -run coarse:fine {*}$synth_full_args
 }
 
+# Resolve internal tristates left by the slang frontend ---
+if { [env_var_equals SYNTH_HDL_FRONTEND slang] } {
+  tribuf -logic
+  opt_clean
+}
 
 if { $::env(SYNTH_MOCK_LARGE_MEMORIES) } {
   memory_collect
@@ -320,6 +325,14 @@ if {
   # gets confused by, once Yosys#4931 is merged we can remove this branch and
   # always run `check -assert -mapped`
   check -assert
+}
+
+if { $::env(SYNTH_REPEATABLE_BUILD) } {
+  # techmap re-attaches src attributes that point into the techmap library,
+  # after synth_canonicalize.tcl stripped them; strip again so the netlist
+  # carries no build paths.
+  setattr -unset src *
+  setattr -mod -unset src *
 }
 
 # Write synthesized design
