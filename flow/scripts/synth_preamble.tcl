@@ -43,6 +43,25 @@ proc read_checkpoint { file } {
   }
 }
 
+# AUTO_MEMORIES: memory modules whose generated liberty view replaces
+# their behavioral body during synthesis. The list is produced by
+# scripts/memories/gen_memories.py before canonicalization; see
+# docs/user/AutoMemories.md.
+proc auto_memories_blackboxes { } {
+  if { ![env_var_equals AUTO_MEMORIES 1] } {
+    return {}
+  }
+  set f "$::env(RESULTS_DIR)/memories/blackboxes.txt"
+  if { ![file exists $f] } {
+    error "AUTO_MEMORIES=1 but $f is missing;\
+      the do-auto-memories step must run before synthesis"
+  }
+  set fh [open $f r]
+  set content [string map {\r ""} [read $fh]]
+  close $fh
+  return [regexp -all -inline {\S+} $content]
+}
+
 proc read_design_sources { } {
   # We are reading Verilog sources
   source $::env(SCRIPTS_DIR)/synth_stdcells.tcl
@@ -94,6 +113,12 @@ proc read_design_sources { } {
       }
     }
 
+    # Blackbox AUTO_MEMORIES-detected memory modules so their generated
+    # liberty view wins over their behavioral bodies.
+    foreach m [auto_memories_blackboxes] {
+      lappend slang_args --blackboxed-module "$m"
+    }
+
     # Add user arguments
     lappend slang_args {*}$::env(SYNTH_SLANG_ARGS)
 
@@ -119,6 +144,9 @@ proc read_design_sources { } {
     if { [env_var_exists_and_non_empty SYNTH_BLACKBOXES] } {
       error "Non-empty SYNTH_BLACKBOXES unsupported with HDL frontend \"verific\""
     }
+    if { [llength [auto_memories_blackboxes]] > 0 } {
+      error "AUTO_MEMORIES unsupported with HDL frontend \"$::env(SYNTH_HDL_FRONTEND)\""
+    }
   } elseif { ![env_var_exists_and_non_empty SYNTH_HDL_FRONTEND] } {
     verilog_defaults -push
     if { [env_var_exists_and_non_empty VERILOG_DEFINES] } {
@@ -138,6 +166,18 @@ proc read_design_sources { } {
       chparam -set $key $value $::env(DESIGN_NAME)
     }
 
+    # AUTO_MEMORIES blackboxing runs before `hierarchy -check`: a
+    # memory wrapper may instantiate modules the sources never define
+    # (the behavioral body is being discarded anyway), so the check is
+    # only meaningful after the bodies are gone.
+    set auto_blackboxes [auto_memories_blackboxes]
+    if { [llength $auto_blackboxes] > 0 } {
+      hierarchy -top $::env(DESIGN_NAME)
+      foreach m $auto_blackboxes {
+        blackbox $m
+      }
+      hierarchy -check -top $::env(DESIGN_NAME)
+    }
     if { [env_var_exists_and_non_empty SYNTH_BLACKBOXES] } {
       hierarchy -check -top $::env(DESIGN_NAME)
       foreach m $::env(SYNTH_BLACKBOXES) {
@@ -175,17 +215,6 @@ if { [env_var_exists_and_non_empty DONT_USE_CELLS] } {
 # Technology mapping for cells
 set abc_args [list -script $abc_script \
   {*}$lib_args {*}$lib_dont_use_args -constr $::env(OBJECTS_DIR)/abc.constr]
-
-if { [env_var_exists_and_non_empty SDC_FILE_CLOCK_PERIOD] } {
-  puts "Extracting clock period from SDC file: $::env(SDC_FILE_CLOCK_PERIOD)"
-  set fp [open $::env(SDC_FILE_CLOCK_PERIOD) r]
-  set clock_period [string trim [read $fp]]
-  if { $clock_period != "" } {
-    puts "Setting clock period to $clock_period"
-    lappend abc_args -D $clock_period
-  }
-  close $fp
-}
 
 set constr [open $::env(OBJECTS_DIR)/abc.constr w]
 puts $constr "set_driving_cell $::env(ABC_DRIVER_CELL)"
