@@ -91,7 +91,6 @@ configuration file.
 | Variable | Description | Default |
 | --- | --- | --- |
 | <a name="ABC_AREA"></a>ABC_AREA| Strategies for Yosys ABC synthesis: Area/Speed. Default ABC_SPEED.| 0|
-| <a name="ABC_CLOCK_PERIOD_IN_PS"></a>ABC_CLOCK_PERIOD_IN_PS| Clock period to be used by STA during synthesis. Default value read from `constraint.sdc`.| |
 | <a name="ABC_DRIVER_CELL"></a>ABC_DRIVER_CELL| Default driver cell used during ABC synthesis.| |
 | <a name="ABC_LOAD_IN_FF"></a>ABC_LOAD_IN_FF| During synthesis set_load value used.| |
 | <a name="ABSTRACT_SOURCE"></a>ABSTRACT_SOURCE| Which .odb file to use to create abstract| |
@@ -103,7 +102,7 @@ configuration file.
 | <a name="ADDITIONAL_MEMORIES"></a>ADDITIONAL_MEMORIES| Experimental. Space-separated list of user-supplied `.memories` files (the memories.json JSON schema) merged onto the set AUTO_MEMORIES detects — to force-convert a memory the idiomatic gate rejects, or to describe one the scanner cannot find. See docs/user/AutoMemories.md.| |
 | <a name="ADDITIONAL_SITES"></a>ADDITIONAL_SITES| Passed as -additional_sites to initialize_floorplan.| |
 | <a name="ASAP7_USE_VT"></a>ASAP7_USE_VT| A space separated list of VT options to use with the ASAP7 standard cell library: RVT, LVT, SLVT.| RVT|
-| <a name="AUTO_MEMORIES"></a>AUTO_MEMORIES| Experimental. When set to 1, memory-shaped modules in the RTL (firtool/CIRCT `R*/W*/RW*_` port convention, module boundary only) are detected pre-synthesis, inventoried in `$(RESULTS_DIR)/memories.json`, and — when idiomatic as an SRAM macro — given generated .lib/.lef views under `$(RESULTS_DIR)/memories/`. Synthesis blackboxes those modules and all later stages read the generated views, so an existing design gets macro-based results without a memory compiler. Supported for the asap7 platform only. See docs/user/AutoMemories.md.| 0|
+| <a name="AUTO_MEMORIES"></a>AUTO_MEMORIES| Experimental. When set to 1, memories that yosys infers in the RTL (`$mem_v2` cells, module boundary only) are detected pre-synthesis, inventoried in `$(RESULTS_DIR)/memories.json`, and — when idiomatic as an SRAM macro — given generated .lib/.lef views under `$(RESULTS_DIR)/memories/`. Synthesis blackboxes those modules and all later stages read the generated views, so an existing design gets macro-based results without a memory compiler. Supported for the asap7 platform only. See docs/user/AutoMemories.md.| 0|
 | <a name="BALANCE_ROWS"></a>BALANCE_ROWS| Balance rows during placement.| 0|
 | <a name="BLOCKS"></a>BLOCKS| Blocks used as hard macros in a hierarchical flow. Do note that you have to specify block-specific inputs file in the directory mentioned by Makefile.| |
 | <a name="BUFFER_PORTS_ARGS"></a>BUFFER_PORTS_ARGS| Specify arguments to the buffer_ports call during placement. Only used if DONT_BUFFER_PORTS=0.| |
@@ -246,7 +245,7 @@ configuration file.
 | <a name="PWR_NETS_VOLTAGES"></a>PWR_NETS_VOLTAGES| Used for IR Drop calculation.| |
 | <a name="RCX_RULES"></a>RCX_RULES| RC Extraction rules file path.| |
 | <a name="RECOVER_POWER"></a>RECOVER_POWER| Specifies how many percent of paths with positive slacks can be slowed for power savings [0-100].| 0|
-| <a name="REMOVE_ABC_BUFFERS"></a>REMOVE_ABC_BUFFERS (deprecated)| Remove abc buffers from the netlist. If timing repair in floorplanning is taking too long, use a SETUP/HOLD_SLACK_MARGIN to terminate timing repair early instead of using REMOVE_ABC_BUFFERS or set SKIP_LAST_GASP=1.| 0|
+| <a name="REMOVE_ABC_BUFFERS"></a>REMOVE_ABC_BUFFERS (deprecated)| Remove abc buffers from the netlist. If timing repair in floorplanning is taking too long, use a SETUP/HOLD_SLACK_MARGIN to terminate timing repair early instead of using REMOVE_ABC_BUFFERS or set SKIP_LAST_GASP=1. Some designs still need it to reach their QoR targets.| 0|
 | <a name="REMOVE_CELLS_FOR_LEC"></a>REMOVE_CELLS_FOR_LEC| String patterns directly passed to write_verilog -remove_cells <> for lec checks.| |
 | <a name="REPAIR_PDN_VIA_LAYER"></a>REPAIR_PDN_VIA_LAYER| Remove power grid vias which generate DRC violations after detailed routing.| |
 | <a name="REPORT_CLOCK_SKEW"></a>REPORT_CLOCK_SKEW| Report clock skew as part of reporting metrics, starting at CTS, before which there is no clock skew. This metric can be quite time-consuming, so it can be useful to disable.| 1|
@@ -342,7 +341,6 @@ configuration file.
 ## synth variables
 
 - [ABC_AREA](#ABC_AREA)
-- [ABC_CLOCK_PERIOD_IN_PS](#ABC_CLOCK_PERIOD_IN_PS)
 - [ABC_DRIVER_CELL](#ABC_DRIVER_CELL)
 - [ABC_LOAD_IN_FF](#ABC_LOAD_IN_FF)
 - [ADDER_MAP_FILE](#ADDER_MAP_FILE)
