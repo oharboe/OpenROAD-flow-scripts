@@ -192,9 +192,9 @@ SYNTH_USE_SYN:
   default: 0
 AUTO_MEMORIES:
   description: >
-    Experimental. When set to 1, memory-shaped modules in the RTL
-    (firtool/CIRCT `R*/W*/RW*_` port convention, module boundary only)
-    are detected pre-synthesis, inventoried in
+    Experimental. When set to 1, memories that yosys infers in the RTL
+    (`$mem_v2` cells, module boundary only) are detected
+    pre-synthesis, inventoried in
     `$(RESULTS_DIR)/memories.json`, and — when idiomatic as an SRAM
     macro — given generated .lib/.lef views under
     `$(RESULTS_DIR)/memories/`. Synthesis blackboxes those modules and
@@ -437,12 +437,6 @@ MIN_BUF_CELL_AND_PORTS:
     Used to insert a buffer cell to pass through wires. Used in synthesis.
   stages:
     - synth
-ABC_CLOCK_PERIOD_IN_PS:
-  description: >
-    Clock period to be used by STA during synthesis. Default value read from
-    `constraint.sdc`.
-  stages:
-    - synth
 ABC_DRIVER_CELL:
   description: |
     Default driver cell used during ABC synthesis.
@@ -512,6 +506,7 @@ REMOVE_ABC_BUFFERS:
     Remove abc buffers from the netlist. If timing repair in floorplanning is
     taking too long, use a SETUP/HOLD_SLACK_MARGIN to terminate timing repair early
     instead of using REMOVE_ABC_BUFFERS or set SKIP_LAST_GASP=1.
+    Some designs still need it to reach their QoR targets.
   stages:
     - floorplan
   deprecated: 1
@@ -553,21 +548,6 @@ MACRO_PLACEMENT_TCL:
     the macro placer: the macro placement file does not contain the
     locations that the macro placer generates for the standard cells,
     and those locations impact global placement.
-  stages:
-    - floorplan
-MACRO_PLACE_HALO:
-  description: >
-    Horizontal/vertical halo around macros (microns). Used by automatic macro
-    placement.
-  stages:
-    - floorplan
-MACRO_BLOCKAGE_HALO:
-  description: >
-    Distance beyond the edges of a macro that will also be covered by the
-    blockage generated for that macro.
-    Note that the default macro blockage halo comes from the largest of the
-    specified MACRO_PLACE_HALO x or y values. This variable overrides that
-    calculation.
   stages:
     - floorplan
 PDN_TCL:
@@ -627,9 +607,15 @@ CELL_PAD_IN_SITES_GLOBAL_PLACEMENT:
   tunable: 1
 DETAIL_PLACEMENT_ARGS:
   description: >
-    Specify arguments to the detailed_placement call during placement.
+    Specify arguments to every detailed_placement call: the one in placement
+    and the re-legalizations after clock tree synthesis, after repair in
+    CTS and after the repairs in global route. A legalizer chosen here
+    (-use_diamond_legalizer, -max_displacement) is therefore the one every
+    stage uses.
   stages:
     - place
+    - cts
+    - grt
 CELL_PAD_IN_SITES_DETAIL_PLACEMENT:
   description: >
     Cell padding on both sides in site widths to ease routability in detail
@@ -1424,6 +1410,21 @@ RTLMP_MIN_MACRO:
   description: >
     Minimum number of macros in a cluster. If unset, rtl_macro_placer will
     calculate a value based on the design attributes.
+  stages:
+    - floorplan
+RTLMP_MIN_CHANNEL_SIZE:
+  description: >
+    Minimum channel width and height between macros (microns), given as one
+    value for both, or two values "width height".
+  stages:
+    - floorplan
+RTLMP_PIN_AWARE_CHANNELS:
+  description: >
+    Set to 1 to trim macro channels based on the pin locations of macros,
+    instead of using full channels. Requires RTLMP_MIN_CHANNEL_SIZE to also be set.
+    Defaults to 1 whenever RTLMP_MIN_CHANNEL_SIZE is set and
+    this variable is not explicitly set to 0.
+  default: 1
   stages:
     - floorplan
 RTLMP_MIN_AR:
