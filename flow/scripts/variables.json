@@ -6,12 +6,6 @@
       "synth"
     ]
   },
-  "ABC_CLOCK_PERIOD_IN_PS": {
-    "description": "Clock period to be used by STA during synthesis. Default value read from `constraint.sdc`.\n",
-    "stages": [
-      "synth"
-    ]
-  },
   "ABC_DRIVER_CELL": {
     "description": "Default driver cell used during ABC synthesis.\n",
     "stages": [
@@ -72,7 +66,7 @@
   },
   "AUTO_MEMORIES": {
     "default": 0,
-    "description": "Experimental. When set to 1, memory-shaped modules in the RTL (firtool/CIRCT `R*/W*/RW*_` port convention, module boundary only) are detected pre-synthesis, inventoried in `$(RESULTS_DIR)/memories.json`, and \u2014 when idiomatic as an SRAM macro \u2014 given generated .lib/.lef views under `$(RESULTS_DIR)/memories/`. Synthesis blackboxes those modules and all later stages read the generated views, so an existing design gets macro-based results without a memory compiler. Supported for the asap7 platform only. See docs/user/AutoMemories.md.\n"
+    "description": "Experimental. When set to 1, memories that yosys infers in the RTL (`$mem_v2` cells, module boundary only) are detected pre-synthesis, inventoried in `$(RESULTS_DIR)/memories.json`, and \u2014 when idiomatic as an SRAM macro \u2014 given generated .lib/.lef views under `$(RESULTS_DIR)/memories/`. Synthesis blackboxes those modules and all later stages read the generated views, so an existing design gets macro-based results without a memory compiler. Supported for the asap7 platform only. See docs/user/AutoMemories.md.\n"
   },
   "BALANCE_ROWS": {
     "default": 0,
@@ -276,9 +270,11 @@
     ]
   },
   "DETAIL_PLACEMENT_ARGS": {
-    "description": "Specify arguments to the detailed_placement call during placement.\n",
+    "description": "Specify arguments to every detailed_placement call: the one in placement and the re-legalizations after clock tree synthesis, after repair in CTS and after the repairs in global route. A legalizer chosen here (-use_diamond_legalizer, -max_displacement) is therefore the one every stage uses.\n",
     "stages": [
-      "place"
+      "place",
+      "cts",
+      "grt"
     ]
   },
   "DFF_LIB_FILE": {
@@ -466,7 +462,7 @@
   },
   "INFER_CLKGATES": {
     "default": 0,
-    "description": "Enables Yosys clock gate inference. Uses Liberty to determine clock gating cell\n",
+    "description": "Enables Yosys clock gate inference. By default, it uses the Liberty cell definitions to determine clock gating cell. The selection can be overridden using the POS_CLKGATE_AND_PORTS and/or NEG_CLKGATE_AND_PORTS variables.\n",
     "stages": [
       "synth"
     ]
@@ -513,16 +509,20 @@
     "type": "string"
   },
   "LEC_AUX_VERILOG_FILES": {
-    "description": "Additional Verilog files (e.g. blackbox stubs) to include in LEC equivalence checks. Appended to the generated Verilog netlist before running the formal equivalence check.\n",
+    "description": "Additional Verilog files (e.g. blackbox stubs) to include in generated netlists for formal equivalence checks.\n",
     "stages": [
-      "cts"
+      "synth",
+      "cts",
+      "final"
     ]
   },
   "LEC_CHECK": {
-    "default": 0,
-    "description": "Perform a formal equivalence check between before and after netlists. If this fails, report an issue to OpenROAD.\n",
+    "default": "$(if $(wildcard $(KEPLER_FORMAL_EXE)),1,0)",
+    "description": "Perform formal equivalence checks between before and after netlists. This checks CTS repair timing and the initial synthesis netlist against the final netlist. If this fails, report an issue to OpenROAD.\n",
     "stages": [
-      "cts"
+      "synth",
+      "cts",
+      "final"
     ]
   },
   "LIB_FILES": {
@@ -532,23 +532,11 @@
     "default": "NLDM",
     "description": "Selects between NLDM and CCS timing models for the ASAP7 platform. Valid values: NLDM (default), CCS. Used in flow/platforms/asap7/config.mk to pick the LIB_DIR subdirectory and accumulate the corresponding $(CORNER)_$(LIB_MODEL)_LIB_FILES list, and in flow/scripts/load.tcl to gate CCS-specific Tcl branches.\n"
   },
-  "MACRO_BLOCKAGE_HALO": {
-    "description": "Distance beyond the edges of a macro that will also be covered by the blockage generated for that macro. Note that the default macro blockage halo comes from the largest of the specified MACRO_PLACE_HALO x or y values. This variable overrides that calculation.\n",
-    "stages": [
-      "floorplan"
-    ]
-  },
   "MACRO_EXTENSION": {
     "description": "Sets the number of GCells added to the blockages boundaries from macros.\n"
   },
   "MACRO_PLACEMENT_TCL": {
-    "description": "Specifies the path of a TCL file on how to place macros manually.\nThe user may choose to place just some of the macros in the design.\nThe macro placer will handle the remaining unplaced macros.\n",
-    "stages": [
-      "floorplan"
-    ]
-  },
-  "MACRO_PLACE_HALO": {
-    "description": "Horizontal/vertical halo around macros (microns). Used by automatic macro placement.\n",
+    "description": "Specifies the path of a TCL file on how to place macros manually.\nThe user may choose to place just some of the macros in the design.\nThe macro placer will handle the remaining unplaced macros. Note\nthat using the macro placement file generated by the macro placer\nwill not result in the same global placement as actually running\nthe macro placer: the macro placement file does not contain the\nlocations that the macro placer generates for the standard cells,\nand those locations impact global placement.\n",
     "stages": [
       "floorplan"
     ]
@@ -648,6 +636,12 @@
       "final"
     ]
   },
+  "NEG_CLKGATE_AND_PORTS": {
+    "description": "Specifies the active low enable clock gating cell and port names when used in conjunction with the INFER_CLKGATES variable. Format is \"cell_name enable_port:master_clock:gated_clock\"\n",
+    "stages": [
+      "synth"
+    ]
+  },
   "NUM_CORES": {
     "description": "Passed to `openroad -threads $(NUM_CORES)`, defaults to numbers of cores in system as determined by system specific code in Makefile, `nproc` is tried first. OpenROAD does not limit itself to this number of cores across OpenROAD running instances, which can lead to overprovisioning in contexts such as bazel-orfs where there could be many routing, or place jobs running at the same time.\n",
     "stages": [
@@ -659,7 +653,8 @@
     "description": "Feature toggle to enable to run OpenROAD in hierarchical mode, otherwise considered flat. Will eventually be the default and this option will be retired.\n",
     "stages": [
       "All stages"
-    ]
+    ],
+    "tunable": 1
   },
   "OPT_POST_GRT_WNS": {
     "default": 1,
@@ -819,6 +814,12 @@
       "floorplan"
     ]
   },
+  "POS_CLKGATE_AND_PORTS": {
+    "description": "Specifies the active high enable clock gating cell and port names when used in conjunction with the INFER_CLKGATES variable. Format is \"cell_name enable_port:master_clock:gated_clock\"\n",
+    "stages": [
+      "synth"
+    ]
+  },
   "PRE_CTS_TCL": {
     "description": "Specifies a Tcl script with commands to run before CTS.\n",
     "stages": [
@@ -934,7 +935,7 @@
   "REMOVE_ABC_BUFFERS": {
     "default": 0,
     "deprecated": 1,
-    "description": "Remove abc buffers from the netlist. If timing repair in floorplanning is taking too long, use a SETUP/HOLD_SLACK_MARGIN to terminate timing repair early instead of using REMOVE_ABC_BUFFERS or set SKIP_LAST_GASP=1.\n",
+    "description": "Remove abc buffers from the netlist. If timing repair in floorplanning is taking too long, use a SETUP/HOLD_SLACK_MARGIN to terminate timing repair early instead of using REMOVE_ABC_BUFFERS or set SKIP_LAST_GASP=1. Some designs still need it to reach their QoR targets.\n",
     "stages": [
       "floorplan"
     ]
@@ -942,12 +943,6 @@
   "REMOVE_CELLS_FOR_LEC": {
     "description": "String patterns directly passed to write_verilog -remove_cells <> for lec checks.\n",
     "type": "string"
-  },
-  "REMOVE_LIBS_FOR_LEC": {
-    "description": "List of Liberty files to exclude from LEC. This is required for cases where a Verilog black box needs to be used instead of a Liberty file.\n",
-    "stages": [
-      "cts"
-    ]
   },
   "REPAIR_PDN_VIA_LAYER": {
     "description": "Remove power grid vias which generate DRC violations after detailed routing.\n"
@@ -1021,6 +1016,13 @@
       "floorplan"
     ]
   },
+  "RTLMP_KEEP_CLUSTERING": {
+    "default": 0,
+    "description": "Set to 1 to store the RTL macro placer's clustering hierarchy in the ODB as nested dbGroups.\n",
+    "stages": [
+      "floorplan"
+    ]
+  },
   "RTLMP_MAX_INST": {
     "description": "Maximum number of standard cells in a cluster. If unset, rtl_macro_placer will calculate a value based on the design attributes.\n",
     "stages": [
@@ -1043,6 +1045,12 @@
   "RTLMP_MIN_AR": {
     "default": 0.33,
     "description": "Specifies the minimum aspect ratio (height/width).\n",
+    "stages": [
+      "floorplan"
+    ]
+  },
+  "RTLMP_MIN_CHANNEL_SIZE": {
+    "description": "Minimum channel width and height between macros (microns), given as one value for both, or two values \"width height\".\n",
     "stages": [
       "floorplan"
     ]
@@ -1073,6 +1081,13 @@
       "floorplan"
     ]
   },
+  "RTLMP_PIN_AWARE_CHANNELS": {
+    "default": 1,
+    "description": "Set to 1 to trim macro channels based on the pin locations of macros, instead of using full channels. Requires RTLMP_MIN_CHANNEL_SIZE to also be set. Defaults to 1 whenever RTLMP_MIN_CHANNEL_SIZE is set and this variable is not explicitly set to 0.\n",
+    "stages": [
+      "floorplan"
+    ]
+  },
   "RTLMP_RPT_DIR": {
     "description": "Path to the directory where reports are saved.\n",
     "stages": [
@@ -1084,12 +1099,6 @@
     "description": "Weight for half-perimiter wirelength.\n",
     "stages": [
       "floorplan"
-    ]
-  },
-  "RULES_JSON": {
-    "description": "json files with the metrics baseline regression rules. In the ORFS Makefile, this defaults to $DESIGN_DIR/rules-base.json, but ORFS does not mandate the users source directory layout and this can be placed elsewhere when the user sets up an ORFS config.mk or from bazel-orfs.\n",
-    "stages": [
-      "test"
     ]
   },
   "RUN_LOG_NAME_STEM": {
@@ -1117,6 +1126,14 @@
   },
   "SEAL_GDS": {
     "description": "Seal macro to place around the design.\n"
+  },
+  "SEC_CHECK": {
+    "default": 0,
+    "description": "Perform a sequential equivalence check between the initial synthesis netlist and final netlist with the Kepler Formal PDR engine. If this fails, report an issue to OpenROAD.\n",
+    "stages": [
+      "synth",
+      "final"
+    ]
   },
   "SETUP_MOVE_SEQUENCE": {
     "description": "Passed as -sequence to repair_timing. This should be a string of move keywords separated by commas.\n",
@@ -1255,10 +1272,12 @@
     "tunable": 1
   },
   "SWAP_ARITH_OPERATORS": {
+    "default": 0,
     "description": "Improve timing QoR by swapping ALU and MULT arithmetic operators.\n",
     "stages": [
       "All stages"
-    ]
+    ],
+    "tunable": 1
   },
   "SYNTH_ARGS": {
     "description": "Optional synthesis variables for yosys.\n",
@@ -1295,14 +1314,16 @@
     "description": "Select an alternative language frontend to ingest the design. Available option is \"slang\". If the variable is empty, design is read with the Yosys read_verilog command.\n",
     "stages": [
       "synth"
-    ]
+    ],
+    "tunable": 1
   },
   "SYNTH_HIERARCHICAL": {
     "default": 0,
     "description": "Enable to Synthesis hierarchically, otherwise considered flat synthesis.\n",
     "stages": [
       "synth"
-    ]
+    ],
+    "tunable": 1
   },
   "SYNTH_HIER_SEPARATOR": {
     "default": ".",
@@ -1365,6 +1386,7 @@
     ]
   },
   "SYNTH_OPT_HIER": {
+    "default": 0,
     "description": "Optimize constants across hierarchical boundaries.\n",
     "stages": [
       "synth"
@@ -1417,10 +1439,12 @@
     ]
   },
   "SYNTH_WRAPPED_OPERATORS": {
+    "default": 0,
     "description": "Synthesize multiple architectural options for each arithmetic operator in the design. These options are available for switching among in later stages of the flow.\n",
     "stages": [
       "All stages"
-    ]
+    ],
+    "tunable": 1
   },
   "TAPCELL_TCL": {
     "description": "Path to Endcap and Welltie cells file.\n",
