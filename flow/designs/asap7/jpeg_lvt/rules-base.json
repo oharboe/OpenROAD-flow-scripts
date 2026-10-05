@@ -1,4 +1,14 @@
 {
+    "synth__canonical_netlist__hash": {
+        "value": "N/A",
+        "compare": "==",
+        "level": "warning"
+    },
+    "synth__netlist__hash": {
+        "value": "N/A",
+        "compare": "==",
+        "level": "warning"
+    },
     "synth__design__instance__area__stdcell": {
         "value": 7047.572508,
         "compare": "<="
@@ -80,11 +90,11 @@
         "compare": "<="
     },
     "finish__timing__setup__ws": {
-        "value": -30.0,
+        "value": -63.9,
         "compare": ">="
     },
     "finish__timing__setup__tns": {
-        "value": -120.0,
+        "value": -514.0,
         "compare": ">="
     },
     "finish__timing__hold__ws": {
