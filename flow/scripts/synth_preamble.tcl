@@ -6,16 +6,30 @@ erase_non_stage_variables synth
 # If using a cached, gate level netlist, then copy over to the results dir with
 # preserve timestamps flag set. If you don't, subsequent runs will cause the
 # floorplan step to be re-executed.
+#
+# Plain cp + touch -r rather than cp -p: -p also preserves mode, which makes
+# cp copy ACLs. That fails with EOPNOTSUPP when the source is on an NFSv4
+# mount (every file there carries a system.nfs4_acl xattr) and the
+# destination filesystem, e.g. ext4 or tmpfs, cannot store it. Only the
+# timestamps matter for make's up-to-date checks; touch -r preserves them
+# with nanosecond precision and, unlike cp --preserve=timestamps, is
+# portable to macOS/BSD.
 if { [env_var_exists_and_non_empty SYNTH_NETLIST_FILES] } {
   if { [llength $::env(SYNTH_NETLIST_FILES)] == 1 } {
-    log_cmd exec cp -p $::env(SYNTH_NETLIST_FILES) $::env(RESULTS_DIR)/1_2_yosys.v
+    log_cmd exec cp $::env(SYNTH_NETLIST_FILES) $::env(RESULTS_DIR)/1_2_yosys.v
+    log_cmd exec touch -r $::env(SYNTH_NETLIST_FILES) \
+      $::env(RESULTS_DIR)/1_2_yosys.v
   } else {
     # The date should be the most recent date of the files, but to
     # keep things simple we just use the creation date
     log_cmd exec cat {*}$::env(SYNTH_NETLIST_FILES) > $::env(RESULTS_DIR)/1_2_yosys.v
   }
   if { [env_var_exists_and_non_empty CACHED_REPORTS] } {
-    log_cmd exec cp -p {*}$::env(CACHED_REPORTS) $::env(REPORTS_DIR)/.
+    foreach report $::env(CACHED_REPORTS) {
+      set dst $::env(REPORTS_DIR)/[file tail $report]
+      log_cmd exec cp $report $dst
+      log_cmd exec touch -r $report $dst
+    }
   }
   exit
 }
@@ -27,6 +41,25 @@ proc read_checkpoint { file } {
   } else {
     read_rtlil $file
   }
+}
+
+# AUTO_MEMORIES: memory modules whose generated liberty view replaces
+# their behavioral body during synthesis. The list is produced by
+# scripts/memories/gen_memories.py before canonicalization; see
+# docs/user/AutoMemories.md.
+proc auto_memories_blackboxes { } {
+  if { ![env_var_equals AUTO_MEMORIES 1] } {
+    return {}
+  }
+  set f "$::env(RESULTS_DIR)/memories/blackboxes.txt"
+  if { ![file exists $f] } {
+    error "AUTO_MEMORIES=1 but $f is missing;\
+      the do-auto-memories step must run before synthesis"
+  }
+  set fh [open $f r]
+  set content [string map {\r ""} [read $fh]]
+  close $fh
+  return [regexp -all -inline {\S+} $content]
 }
 
 proc read_design_sources { } {
@@ -80,6 +113,12 @@ proc read_design_sources { } {
       }
     }
 
+    # Blackbox AUTO_MEMORIES-detected memory modules so their generated
+    # liberty view wins over their behavioral bodies.
+    foreach m [auto_memories_blackboxes] {
+      lappend slang_args --blackboxed-module "$m"
+    }
+
     # Add user arguments
     lappend slang_args {*}$::env(SYNTH_SLANG_ARGS)
 
@@ -105,6 +144,9 @@ proc read_design_sources { } {
     if { [env_var_exists_and_non_empty SYNTH_BLACKBOXES] } {
       error "Non-empty SYNTH_BLACKBOXES unsupported with HDL frontend \"verific\""
     }
+    if { [llength [auto_memories_blackboxes]] > 0 } {
+      error "AUTO_MEMORIES unsupported with HDL frontend \"$::env(SYNTH_HDL_FRONTEND)\""
+    }
   } elseif { ![env_var_exists_and_non_empty SYNTH_HDL_FRONTEND] } {
     verilog_defaults -push
     if { [env_var_exists_and_non_empty VERILOG_DEFINES] } {
@@ -124,6 +166,18 @@ proc read_design_sources { } {
       chparam -set $key $value $::env(DESIGN_NAME)
     }
 
+    # AUTO_MEMORIES blackboxing runs before `hierarchy -check`: a
+    # memory wrapper may instantiate modules the sources never define
+    # (the behavioral body is being discarded anyway), so the check is
+    # only meaningful after the bodies are gone.
+    set auto_blackboxes [auto_memories_blackboxes]
+    if { [llength $auto_blackboxes] > 0 } {
+      hierarchy -top $::env(DESIGN_NAME)
+      foreach m $auto_blackboxes {
+        blackbox $m
+      }
+      hierarchy -check -top $::env(DESIGN_NAME)
+    }
     if { [env_var_exists_and_non_empty SYNTH_BLACKBOXES] } {
       hierarchy -check -top $::env(DESIGN_NAME)
       foreach m $::env(SYNTH_BLACKBOXES) {
@@ -135,7 +189,10 @@ proc read_design_sources { } {
   }
 }
 
-if { $::env(ABC_AREA) } {
+if { [env_var_exists_and_non_empty ABC_SCRIPT] } {
+  puts "Using ABC script $::env(ABC_SCRIPT)."
+  set abc_script $::env(ABC_SCRIPT)
+} elseif { $::env(ABC_AREA) } {
   puts "Using ABC area script."
   set abc_script $::env(SCRIPTS_DIR)/abc_area.script
 } else {
@@ -161,17 +218,6 @@ if { [env_var_exists_and_non_empty DONT_USE_CELLS] } {
 # Technology mapping for cells
 set abc_args [list -script $abc_script \
   {*}$lib_args {*}$lib_dont_use_args -constr $::env(OBJECTS_DIR)/abc.constr]
-
-if { [env_var_exists_and_non_empty SDC_FILE_CLOCK_PERIOD] } {
-  puts "Extracting clock period from SDC file: $::env(SDC_FILE_CLOCK_PERIOD)"
-  set fp [open $::env(SDC_FILE_CLOCK_PERIOD) r]
-  set clock_period [string trim [read $fp]]
-  if { $clock_period != "" } {
-    puts "Setting clock period to $clock_period"
-    lappend abc_args -D $clock_period
-  }
-  close $fp
-}
 
 set constr [open $::env(OBJECTS_DIR)/abc.constr w]
 puts $constr "set_driving_cell $::env(ABC_DRIVER_CELL)"
