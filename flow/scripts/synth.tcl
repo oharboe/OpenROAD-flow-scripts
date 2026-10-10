@@ -104,7 +104,7 @@ if { [env_var_exists_and_non_empty SYNTH_OPERATIONS_ARGS] } {
   set synth_full_args [concat $synth_full_args \
     "-extra-map $::env(FLOW_HOME)/platforms/common/lcu_kogge_stone.v"]
 }
-if { [env_var_exists_and_non_empty SYNTH_OPT_HIER] } {
+if { [env_var_equals SYNTH_OPT_HIER 1] } {
   set synth_full_args [concat $synth_full_args -hieropt]
 }
 
@@ -143,6 +143,11 @@ if {
   synth -flatten -run coarse:fine {*}$synth_full_args
 }
 
+# Resolve internal tristates left by the slang frontend ---
+if { [env_var_equals SYNTH_HDL_FRONTEND slang] } {
+  tribuf -logic
+  opt_clean
+}
 
 if { $::env(SYNTH_MOCK_LARGE_MEMORIES) } {
   memory_collect
@@ -187,10 +192,10 @@ if { [env_var_exists_and_non_empty SYNTH_RETIME_MODULES] } {
 }
 
 if {
-  [env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] ||
-  [env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]
+  [env_var_equals SYNTH_WRAPPED_OPERATORS 1] ||
+  [env_var_equals SWAP_ARITH_OPERATORS 1]
 } {
-  source $::env(SCRIPTS_DIR)/synth_wrap_operators.tcl
+  log_cmd source $::env(SCRIPTS_DIR)/synth_wrap_operators.tcl
 } else {
   synth -top $::env(DESIGN_NAME) -run fine: -noabc {*}$synth_full_args
 }
@@ -211,10 +216,10 @@ opt -purge
 if {
   [env_var_exists_and_non_empty ADDER_MAP_FILE] &&
   (
-    (![env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] &&
-      ![env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]) ||
-    (([env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] ||
-        [env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]) &&
+    (![env_var_equals SYNTH_WRAPPED_OPERATORS 1] &&
+      ![env_var_equals SWAP_ARITH_OPERATORS 1]) ||
+    (([env_var_equals SYNTH_WRAPPED_OPERATORS 1] ||
+        [env_var_equals SWAP_ARITH_OPERATORS 1]) &&
       ![design_has_extracted_operators])
   )
 } {
@@ -229,7 +234,32 @@ if {
 
 # Technology mapping of latches
 if { [env_var_exists_and_non_empty LATCH_MAP_FILE] } {
+  # Legalize async set/reset latches into the latches this map file provides
+  # (soft-logic emulation); the trailing selection keeps dfflegalize off FFs.
+  dfflegalize {*}[get_dfflegalize_args $::env(LATCH_MAP_FILE)] {t:$_DLATCH_*}
   techmap -map $::env(LATCH_MAP_FILE)
+}
+
+# Clock gate inference.
+if { [env_var_equals INFER_CLKGATES 1] } {
+  set clkgate_args {}
+  if {
+    [env_var_exists_and_non_empty POS_CLKGATE_AND_PORTS] ||
+    [env_var_exists_and_non_empty NEG_CLKGATE_AND_PORTS]
+  } {
+    if { [env_var_exists_and_non_empty POS_CLKGATE_AND_PORTS] } {
+      lappend clkgate_args "-pos"
+      lappend clkgate_args {*}$::env(POS_CLKGATE_AND_PORTS)
+    }
+    if { [env_var_exists_and_non_empty NEG_CLKGATE_AND_PORTS] } {
+      lappend clkgate_args "-neg"
+      lappend clkgate_args {*}$::env(NEG_CLKGATE_AND_PORTS)
+    }
+  } else {
+    # Let yosys decide on which clock gating cell to use
+    lappend clkgate_args {*}$lib_args
+  }
+  log_cmd clockgate {*}$clkgate_args
 }
 
 # Technology mapping of flip-flops
@@ -249,13 +279,18 @@ opt
 setundef -zero
 
 if {
-  ![env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] &&
-  ![env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]
+  ![env_var_equals SYNTH_WRAPPED_OPERATORS 1] &&
+  ![env_var_equals SWAP_ARITH_OPERATORS 1]
 } {
   log_cmd abc {*}$abc_args
 } else {
+  # Not dead code: abc_new mistakes the "-script" in /OpenROAD-flow-scripts/...
+  # paths for a given -script and drops its default (YosysHQ/yosys#6320).
   scratchpad -set abc9.script $::env(SCRIPTS_DIR)/abc_speed_gia_only.script
-  # crop out -script from arguments
+  # abc_new maps each arithmetic operator module with the abc9_script
+  # attribute synth_wrap_operators.tcl sets on it, and every other module
+  # with the script above. An explicit -script overrides both, so it is
+  # cropped from the arguments and ABC_SCRIPT does not apply here.
   set abc_args [lrange $abc_args 2 end]
   log_cmd abc_new {*}$abc_args
   delete {t:$specify*}
@@ -286,8 +321,8 @@ tee -o $::env(REPORTS_DIR)/synth_stat.txt stat -hierarchy {*}$lib_args
 # check the design is composed exclusively of target cells, and
 # check for other problems
 if {
-  ![env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] &&
-  ![env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]
+  ![env_var_equals SYNTH_WRAPPED_OPERATORS 1] &&
+  ![env_var_equals SWAP_ARITH_OPERATORS 1]
 } {
   check -assert -mapped
 } else {
@@ -297,9 +332,13 @@ if {
   check -assert
 }
 
+if { $::env(SYNTH_REPEATABLE_BUILD) } {
+  # techmap re-attaches src attributes that point into the techmap library,
+  # after synth_canonicalize.tcl stripped them; strip again so the netlist
+  # carries no build paths.
+  setattr -unset src *
+  setattr -mod -unset src *
+}
+
 # Write synthesized design
 write_verilog -nohex -nodec $::env(RESULTS_DIR)/1_2_yosys.v
-# One day a more sophisticated synthesis will write out a modified
-# .sdc file after synthesis. For now, just copy the input .sdc file,
-# making synthesis more consistent with other stages.
-log_cmd exec cp $::env(SDC_FILE) $::env(RESULTS_DIR)/1_synth.sdc
