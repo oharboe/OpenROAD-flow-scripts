@@ -3,14 +3,7 @@
 import json
 import argparse
 import os
-from datetime import datetime, timezone
-
-# --- FIRESTORE (remove when deprecating) ---
-import firebase_admin
-from firebase_admin import credentials
-from firebase_admin import firestore
-
-# --- END FIRESTORE ---
+import sys
 
 # --- PUBSUB ---
 from google.cloud import pubsub_v1
@@ -37,7 +30,6 @@ parser.add_argument("--jenkinsURL", type=str, help="Jenkins Report URL")
 parser.add_argument(
     "--changeBranch", type=str, help="Branch corresponding to change request"
 )
-parser.add_argument("--cred", type=str, help="Service account credentials file")
 parser.add_argument("--variant", type=str, default="base")
 parser.add_argument(
     "--jobName",
@@ -85,152 +77,13 @@ parser.add_argument(
 args = parser.parse_args()
 
 
-# --- FIRESTORE (remove when deprecating) ---
-def upload_data(db, dataFile, platform, design, variant, args, rules):
-    # Set the document data
-    key = args.commitSHA + "-" + platform + "-" + design + "-" + variant
-    doc_ref = db.collection("build_metrics").document(key)
-    doc_ref.set(
-        {
-            "build_id": args.buildID,
-            "branch_name": args.branchName,
-            "pipeline_id": args.pipelineID,
-            "change_branch": args.changeBranch,
-            "commit_sha": args.commitSHA,
-            "jenkins_url": args.jenkinsURL,
-            "rules": rules,
-        }
-    )
-
-    # Load JSON data from file
-    with open(dataFile) as f:
-        data = json.load(f)
-
-    # Replace the character ':' in the keys
-    new_data = {}
-    stages = []
-    excludes = ["run", "commit", "total_time", "constraints"]
-    gen_date = datetime.now()
-    for k, v in data.items():
-        new_key = k.replace(":", "__")  # replace ':' with '__'
-        new_data[new_key] = v
-        stage_name = k.split("__")[0]
-        if stage_name not in excludes:
-            stages.append(stage_name)
-        if k == "run__flow__generate_date":
-            # Convert string to datetime
-            gen_date = datetime.strptime(v, "%Y-%m-%d %H:%M")
-            new_data[k] = gen_date
-    stages = set(stages)
-    new_data["stages"] = stages
-
-    # Set the data to the document in Firestore
-    doc_ref.update(new_data)
-
-    branch_doc_ref = db.collection("branches").document(args.branchName)
-    # check if date is greater than the one in the document if it exists
-    if branch_doc_ref.get().exists:
-        current_date = branch_doc_ref.get().to_dict().get("run__flow__generate_date")
-        current_date = current_date.replace(tzinfo=timezone.utc)
-        gen_date = gen_date.replace(tzinfo=timezone.utc)
-        if current_date is not None and gen_date > current_date:
-            branch_doc_ref.update(
-                {
-                    "run__flow__generate_date": gen_date,
-                    "jenkins_url": args.jenkinsURL,
-                    "change_branch": args.changeBranch,
-                }
-            )
-        else:
-            branch_doc_ref.update(
-                {
-                    "jenkins_url": args.jenkinsURL,
-                    "change_branch": args.changeBranch,
-                }
-            )
-    else:
-        branch_doc_ref.set(
-            {
-                "name": args.branchName,
-                "run__flow__generate_date": gen_date,
-                "jenkins_url": args.jenkinsURL,
-            }
-        )
-
-    commit_doc_ref = db.collection("commits").document(args.commitSHA)
-    if commit_doc_ref.get().exists:
-        current_date = commit_doc_ref.get().to_dict().get("run__flow__generate_date")
-        current_date = current_date.replace(tzinfo=timezone.utc)
-        gen_date = gen_date.replace(tzinfo=timezone.utc)
-        if current_date is not None and gen_date > current_date:
-            commit_doc_ref.update(
-                {
-                    "run__flow__generate_date": gen_date,
-                    "jenkins_url": args.jenkinsURL,
-                }
-            )
-        else:
-            commit_doc_ref.update(
-                {
-                    "jenkins_url": args.jenkinsURL,
-                }
-            )
-    else:
-        commit_doc_ref.set(
-            {
-                "sha": args.commitSHA,
-                "run__flow__generate_date": gen_date,
-                "jenkins_url": args.jenkinsURL,
-            }
-        )
-
-    platform_doc_ref = db.collection("platforms").document(platform)
-    if platform_doc_ref.get().exists:
-        designs = platform_doc_ref.get().to_dict().get("designs")
-        if design not in designs:
-            design_ref = {
-                "name": design,
-                "rules": rules,
-            }
-            designs[design] = design_ref
-            platform_doc_ref.update(
-                {
-                    "designs": designs,
-                }
-            )
-    else:
-        designs = {}
-        design_ref = {
-            "name": design,
-            "rules": rules,
-        }
-        designs[design] = design_ref
-        platform_doc_ref.set(
-            {
-                "designs": designs,
-                "name": platform,
-            }
-        )
-
-    if (
-        not doc_ref.get().exists
-        or not branch_doc_ref.get().exists
-        or not commit_doc_ref.get().exists
-        or not platform_doc_ref.get().exists
-    ):
-        raise Exception(f"Failed to upload data for {platform} {design} {variant}.")
-
-
-# --- END FIRESTORE ---
-
-
 # --- PUBSUB ---
 # Pub/Sub hard cap is 10 MB. Stay under with safety margin to leave room for
 # attribute overhead and future payload growth.
 MAX_PUBSUB_BYTES = 8 * 1024 * 1024
 
 
-def build_design_record(dataFile, platform, design, variant, rules):
+def build_design_record(dataFile, platform, design, variant):
     """Return a dict for one design to be included in the pipeline-level payload."""
     with open(dataFile) as f:
         data = json.load(f)
@@ -239,7 +92,6 @@ def build_design_record(dataFile, platform, design, variant, rules):
         "platform": platform,
         "design": design,
         "variant": variant,
-        "rules": rules,
         "metrics": metrics,
     }
 
@@ -397,7 +249,7 @@ def publish_v1_per_design(publisher, topic_path, design_records, args, provenanc
 
     Emits one v1-format message per design (no payload_schema_version, metrics
     flattened at the root), matching the legacy schema the ingestion service
-    still supports.
+    still supports. Returns the number of designs that failed to publish.
 
     Provenance is mirrored onto every message: all of them resolve to the same
     build, and the backend upserts components by path, so N copies converge on
@@ -410,6 +262,7 @@ def publish_v1_per_design(publisher, topic_path, design_records, args, provenanc
     key presence rather than by version.
     """
     futures = []
+    failed = 0
     for d in design_records:
         payload = {
             "build_id": args.buildID,
@@ -419,7 +272,6 @@ def publish_v1_per_design(publisher, topic_path, design_records, args, provenanc
             "commit_sha": args.commitSHA,
             "jenkins_url": args.jenkinsURL,
             "jenkins_env": args.jenkinsEnv,
-            "rules": d["rules"],
         }
         if provenance:
             payload.update(provenance)
@@ -434,8 +286,9 @@ def publish_v1_per_design(publisher, topic_path, design_records, args, provenanc
             )
             futures.append((d, future))
         except Exception as e:
+            failed += 1
             print(
-                f"[WARN] Pub/Sub v1 fallback publish failed for "
+                f"[ERROR] Pub/Sub v1 fallback publish failed for "
                 f"{d['platform']} {d['design']} {d['variant']}: {e}"
             )
 
@@ -447,30 +300,16 @@ def publish_v1_per_design(publisher, topic_path, design_records, args, provenanc
                 f"{d['platform']} {d['design']} {d['variant']}."
             )
         except Exception as e:
+            failed += 1
             print(
-                f"[WARN] Pub/Sub v1 fallback publish failed for "
+                f"[ERROR] Pub/Sub v1 fallback publish failed for "
                 f"{d['platform']} {d['design']} {d['variant']}: {e}"
             )
+    return failed
 
 
 # --- END PUBSUB ---
 
-
-def get_rules(dataFile):
-    data = {}
-    if os.path.exists(dataFile):
-        with open(dataFile) as f:
-            data = json.load(f)
-
-    return data
-
-
-# --- FIRESTORE init (remove when deprecating) ---
-db = None
-if args.cred:
-    firebase_admin.initialize_app(credentials.Certificate(args.cred))
-    db = firestore.client()
-# --- END FIRESTORE init ---
 
 # --- PUBSUB init ---
 publisher = None
@@ -513,25 +352,15 @@ for reportDir, dirs, files in sorted(os.walk("reports", topdown=False)):
     if platform == "sky130hd_fakestack" or platform == "src":
         print(f"[WARN] Skiping upload {platform} {design} {variant}.")
         continue
-    print(f"[INFO] Get rules for {platform} {design} {variant}.")
-    rules = get_rules(
-        os.path.join("designs", platform, design, f"rules-{variant}.json")
-    )
-
-    # --- FIRESTORE (remove when deprecating) ---
-    if db:
-        print(f"[INFO] Upload data for {platform} {design} {variant}.")
-        upload_data(db, dataFile, platform, design, variant, args, rules)
-    # --- END FIRESTORE ---
-
     # --- PUBSUB ---
     if publisher:
-        design_records.append(
-            build_design_record(dataFile, platform, design, variant, rules)
-        )
+        design_records.append(build_design_record(dataFile, platform, design, variant))
     # --- END PUBSUB ---
 
 # --- PUBSUB ---
+# A failed publish exits non-zero. A warning alone let CI builds pass while the
+# QoR dashboard stopped receiving results, which froze the baseline that later
+# builds are compared against.
 if publisher and design_records:
     provenance = load_provenance(args.provenanceFile)
     payload = build_pipeline_payload(design_records, args, provenance)
@@ -543,7 +372,14 @@ if publisher and design_records:
             f"{MAX_PUBSUB_BYTES // 1024} KB cap. Falling back to v1 per-design publish "
             f"({len(design_records)} messages)."
         )
-        publish_v1_per_design(publisher, topic_path, design_records, args, provenance)
+        failed = publish_v1_per_design(
+            publisher, topic_path, design_records, args, provenance
+        )
+        if failed:
+            print(
+                f"[ERROR] {failed} of {len(design_records)} designs were not published."
+            )
+            sys.exit(1)
     else:
         try:
             publish_pipeline_report(
@@ -555,7 +391,8 @@ if publisher and design_records:
                 provenance,
             )
         except Exception as e:
-            print(f"[WARN] Pub/Sub publish failed for pipeline report: {e}")
+            print(f"[ERROR] Pub/Sub publish failed for pipeline report: {e}")
+            sys.exit(1)
 elif publisher and not design_records:
     print("[WARN] Pub/Sub publisher initialized but no design records were collected.")
 # --- END PUBSUB ---
