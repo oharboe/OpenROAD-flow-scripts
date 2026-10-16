@@ -48,7 +48,7 @@ endif
 export IO_PLACER_H             ?= M4
 export IO_PLACER_V             ?= M5
 
-export MACRO_PLACE_HALO        ?= 10 10
+export RTLMP_MIN_CHANNEL_SIZE  ?= 20 20
 
 # the followings create a keep out / halo between
 # macro and core rows
@@ -60,13 +60,12 @@ export PLACE_DENSITY ?= 0.60
 # Endcap and Welltie cells
 export TAPCELL_TCL             ?= $(PLATFORM_DIR)/openRoad/tapcell.tcl
 
-export SET_RC_TCL              = $(PLATFORM_DIR)/setRC.tcl
-
 # Route options
-export MIN_ROUTING_LAYER       ?= M2
-export MIN_CLK_ROUTING_LAYER   ?= M4
-export MAX_ROUTING_LAYER       ?= M7
-export ENABLE_RESISTANCE_AWARE ?= 1
+export MIN_ROUTING_LAYER        ?= M2
+export MIN_CLK_ROUTING_LAYER    ?= M4
+export MAX_ROUTING_LAYER        ?= M7
+export ROUTING_LAYER_ADJUSTMENT ?= 0.25
+export ENABLE_RESISTANCE_AWARE  ?= 1
 
 # Define fastRoute tcl
 export FASTROUTE_TCL ?= $(PLATFORM_DIR)/fastroute.tcl
