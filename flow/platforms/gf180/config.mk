@@ -82,7 +82,7 @@ export PDN_TCL                               ?= $(PLATFORM_DIR)/openROAD/pdn/pdn
 export TAPCELL_TCL                           ?= $(PLATFORM_DIR)/openROAD/tapcell.tcl
 
 # macro planning
-export MACRO_PLACE_HALO                      ?= 10 10
+export RTLMP_MIN_CHANNEL_SIZE                ?= 20 20
 
 #---------------------------------------------------------
 # Place
@@ -96,6 +96,8 @@ export PLACE_DENSITY                         ?= 0.40
 export MIN_ROUTING_LAYER                     ?= Metal2
 export MAX_ROUTING_LAYER                     ?= Metal5
 export DISABLE_VIA_GEN                       ?= 1
+
+export OPT_POST_GRT_WNS                      ?= 0
 
 # Define fastRoute tcl
 export FASTROUTE_TCL ?= $(PLATFORM_DIR)/fastroute.tcl
