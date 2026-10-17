@@ -46,8 +46,6 @@ export FOOTPRINT_TCL   = $(PLATFORM_DIR)/bp/footprint.tcl
 export DIE_AREA =    0   0 3000 3000
 export CORE_AREA = 200 200 2800 2800
 
-export ABC_CLOCK_PERIOD_IN_PS = 1250
-
 export PLACE_DENSITY = 0.80
 
 export MACRO_WRAPPERS = $(PLATFORM_DIR)/bp/wrappers/wrappers.tcl
@@ -55,7 +53,7 @@ export RTLMP_FENCE_LX = 850
 export RTLMP_FENCE_LY = 850
 export RTLMP_FENCE_UX = 2150
 export RTLMP_FENCE_UY = 2150
-export MACRO_PLACE_HALO = 28.2 28.2
+export RTLMP_MIN_CHANNEL_SIZE = 58 58
 
 export PDN_TCL = $(PLATFORM_DIR)/cfg/pdn_grid_strategy_13m_9T.top.tcl
 export FASTROUTE_TCL = $(DESIGN_HOME)/$(PLATFORM)/$(DESIGN_NICKNAME)/fastroute.tcl
@@ -72,3 +70,4 @@ export SETUP_SLACK_MARGIN ?= 100
 export SWAP_ARITH_OPERATORS = 1
 export OPENROAD_HIERARCHICAL = 1
 export OPT_POST_GRT_WNS = 0
+
