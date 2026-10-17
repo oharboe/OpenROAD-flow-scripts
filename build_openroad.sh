@@ -23,8 +23,8 @@ INSTALL_PATH="$(pwd)/tools/install"
 YOSYS_USER_ARGS=""
 YOSYS_ARGS=""
 
-OPENROAD_APP_USER_ARGS=""
-OPENROAD_APP_ARGS=""
+OPENROAD_APP_USER_ARGS=()
+OPENROAD_APP_ARGS=()
 
 DOCKER_OS_NAME="ubuntu22.04"
 PROC=-1
@@ -32,14 +32,14 @@ PROC=-1
 WITH_VERIFIC=0
 VERIFIC_SRC=""
 VERIFIC_COMPONENTS='database util containers pct hier_tree verilog'
-VERIFIC_ARGS=" VERIFIC_COMPONENTS='${VERIFIC_COMPONENTS}'"
-VERIFIC_ARGS+=" ENABLE_VERIFIC=1 ENABLE_VERIFIC_VHDL=0 VERIFIC_DIR=verific"
+VERIFIC_ARGS=" -DYOSYS_VERIFIC_DIR=\"${DIR}/tools/yosys/verific\""
 
 function usage() {
         cat << EOF
 
 Usage: $0 [-h|--help] [-o|--local] [-l|--latest]
           [--or_branch BRANCH_NAME] [--or_repo REPO_URL] [--no_init]
+          [-s|--skip_openroad] [--openroad_only]
           [-n|--nice] [-t|--threads N]
           [--yosys-args-overwrite] [--yosys-args STRING]
           [--with-verific PATH]
@@ -58,6 +58,9 @@ Options:
 
     -s, --skip_openroad     Skip building and all git operations on OpenROAD.
 
+    --openroad_only         Build only OpenROAD; skip Yosys, Verific and
+                            kepler-formal. Requires --local.
+
     --or_branch BRANCH_NAME Use the head of branch BRANCH for tools/OpenROAD.
 
     --or_repo REPO_URL      Use a fork at REPO-URL (https/ssh) for tools/OpenROAD.
@@ -69,7 +72,7 @@ Options:
     -n, --nice              Nice all jobs. Use all cpus unless --threads is
                             also given, then use N threads.
 
-    --yosys-args-overwrite  Do not use default flags set by this scrip during
+    --yosys-args-overwrite  Do not use default flags set by this script during
                             Yosys compilation.
 
     --yosys-args STRING     Additional compilation flags for Yosys compilation.
@@ -78,11 +81,12 @@ Options:
                             to the Verific source folder.
 
     --openroad-args-overwrite
-                            Do not use default flags set by this scrip during
-                            OpenROAD app compilation.
+                            Do not use the default OpenROAD Build.sh arguments.
 
-    --openroad-args STRING  Additional compilation flags for OpenROAD app
-                            compilation.
+    --openroad-args STRING  Additional arguments for OpenROAD Build.sh.
+                            For example: '-no-gui'. Quotes group one argument
+                            that holds spaces. All other characters, a
+                            backslash included, are literal.
 
     --install-path PATH     Path to install tools. Default is ${INSTALL_PATH}.
 
@@ -105,6 +109,49 @@ Options valid only for Docker builds:
 EOF
 }
 
+# Split a shell-like string into words and add them to
+# OPENROAD_APP_USER_ARGS. A single or double quote groups a word. Every other
+# character, a backslash included, is literal, and there is no escape
+# character. A quoted word therefore cannot hold its own quote character.
+# Nothing is expanded, so text such as $(...) stays literal.
+__append_openroad_args()
+{
+        local text="$1"
+        local word="" quote="" char="" have_word=0 index
+
+        for (( index = 0; index < ${#text}; index++ )); do
+                char="${text:index:1}"
+                if [ -n "${quote}" ]; then
+                        if [ "${char}" = "${quote}" ]; then
+                                quote=""
+                        else
+                                word+="${char}"
+                        fi
+                elif [ "${char}" = "'" ] || [ "${char}" = '"' ]; then
+                        quote="${char}"
+                        have_word=1
+                elif [[ "${char}" =~ [[:space:]] ]]; then
+                        if [ "${have_word}" -eq 1 ]; then
+                                OPENROAD_APP_USER_ARGS+=("${word}")
+                                word=""
+                                have_word=0
+                        fi
+                else
+                        word+="${char}"
+                        have_word=1
+                fi
+        done
+
+        if [ -n "${quote}" ]; then
+                echo "[ERROR FLW-0006] Unbalanced ${quote} quote in OpenROAD build arguments: ${text}" >&2
+                exit 1
+        fi
+
+        if [ "${have_word}" -eq 1 ]; then
+                OPENROAD_APP_USER_ARGS+=("${word}")
+        fi
+}
+
 # Parse arguments
 __CMD="$0 $@"
 while (( "$#" )); do
@@ -121,6 +168,9 @@ while (( "$#" )); do
                         ;;
                 -s|--skip_openroad)
                         SKIP_OPENROAD=1
+                        ;;
+                --openroad_only)
+                        OPENROAD_ONLY=1
                         ;;
                 --or_branch)
                         OPENROAD_APP_BRANCH="$2"
@@ -164,7 +214,7 @@ while (( "$#" )); do
                         OPENROAD_APP_OVERWRITE_ARGS=1
                         ;;
                 --openroad-args)
-                        OPENROAD_APP_USER_ARGS="$2"
+                        __append_openroad_args "$2"
                         shift
                         ;;
                 --install-path)
@@ -190,6 +240,17 @@ while (( "$#" )); do
         shift
 done
 
+if [ ! -z "${OPENROAD_ONLY+x}" ]; then
+        if [ -z "${LOCAL_BUILD+x}" ]; then
+                echo "[ERROR FLW-0033] --openroad_only requires --local." >&2
+                exit 1
+        fi
+        if [ ! -z "${SKIP_OPENROAD+x}" ]; then
+                echo "[ERROR FLW-0033] --openroad_only and --skip_openroad are mutually exclusive." >&2
+                exit 1
+        fi
+fi
+
 if [[ "$PROC" == "-1" ]]; then
         if [[ "$OSTYPE" == "linux-gnu"* ]]; then
                 PROC=$(nproc --all)
@@ -207,12 +268,13 @@ fi
 echo "[INFO FLW-0028] Compiling with ${PROC} threads."
 
 # Only add install prefix variables after parsing arguments.
-YOSYS_ARGS+=" PREFIX=${INSTALL_PATH}/yosys"
-OPENROAD_APP_ARGS+=" -D CMAKE_INSTALL_PREFIX=${INSTALL_PATH}/OpenROAD"
-if [ -n "$CMAKE_INSTALL_RPATH" ]; then
-        OPENROAD_APP_ARGS+=" -D CMAKE_INSTALL_RPATH=${CMAKE_INSTALL_RPATH}"
-        OPENROAD_APP_ARGS+=" -D CMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE"
-fi
+YOSYS_ARGS+=" -DCMAKE_INSTALL_PREFIX=\"${INSTALL_PATH}/yosys\""
+# Build.sh always builds with Bazel --config=release, which includes
+# --config=opt (-O3 and ThinLTO).
+OPENROAD_APP_ARGS=(
+        "-prefix=${INSTALL_PATH}/OpenROAD"
+        "-threads=${PROC}"
+)
 
 __args_setup() {
         if [ ! -z "${YOSYS_OVERWRITE_ARGS+x}" ]; then
@@ -223,10 +285,10 @@ __args_setup() {
         fi
 
         if [ ! -z "${OPENROAD_APP_OVERWRITE_ARGS+x}" ]; then
-                echo "[INFO FLW-0015] Overwriting OpenROAD app compilation flags."
-                OPENROAD_APP_ARGS="${OPENROAD_APP_USER_ARGS}"
+                echo "[INFO FLW-0015] Overwriting OpenROAD build arguments."
+                OPENROAD_APP_ARGS=("${OPENROAD_APP_USER_ARGS[@]}")
         else
-                OPENROAD_APP_ARGS+=" ${OPENROAD_APP_USER_ARGS}"
+                OPENROAD_APP_ARGS+=("${OPENROAD_APP_USER_ARGS[@]}")
         fi
 }
 
@@ -326,25 +388,11 @@ __local_build()
 
         if [ -z "${SKIP_OPENROAD+x}" ]; then
                 echo "[INFO FLW-0018] Compiling OpenROAD."
-                if [ -f "${DIR}/openroad_deps_prefixes.txt" ]; then
-                        DEPS_PREFIX_ARG="${DIR}/openroad_deps_prefixes.txt"
-                elif [ -f "${DIR}/tools/OpenROAD/etc/openroad_deps_prefixes.txt" ]; then
-                        DEPS_PREFIX_ARG="${DIR}/tools/OpenROAD/etc/openroad_deps_prefixes.txt"
-                elif [ -f /etc/openroad_deps_prefixes.txt ]; then
-                        DEPS_PREFIX_ARG="/etc/openroad_deps_prefixes.txt"
-                else
-                        DEPS_PREFIX_ARG=""
-                fi
-                if [[ -n "${DEPS_PREFIX_ARG}" ]]; then
-                        echo "[INFO FLW-0029] Found OpenROAD dependencies prefixes file: '${DEPS_PREFIX_ARG}'."
-                        DEPS_PREFIX_ARG="-deps-prefixes-file=${DEPS_PREFIX_ARG}"
-                fi
-                eval ${NICE} ./tools/OpenROAD/etc/Build.sh \
-                        -dir="$DIR/tools/OpenROAD/build" \
-                        -threads=${PROC} \
-                        -cmake=\'${OPENROAD_APP_ARGS}\' \
-                        ${DEPS_PREFIX_ARG}
-                ${NICE} cmake --build tools/OpenROAD/build --target install -j "${PROC}"
+                ${NICE} ./tools/OpenROAD/etc/Build.sh "${OPENROAD_APP_ARGS[@]}"
+        fi
+
+        if [ ! -z "${OPENROAD_ONLY+x}" ]; then
+                return
         fi
 
         YOSYS_ABC_PATH=tools/yosys/abc
@@ -363,16 +411,16 @@ __local_build()
         fi
 
         echo "[INFO FLW-0017] Compiling Yosys."
-        eval ${NICE} make install -C tools/yosys -j "${PROC}" ${YOSYS_ARGS}
-
-        echo "[INFO FLW-0030] Compiling yosys-slang."
-        # CMAKE_FLAGS added to work around yosys-slang#141 (unable to build outside of git checkout)
-        ${NICE} make install -C tools/yosys-slang -j "${PROC}" YOSYS_PREFIX="${INSTALL_PATH}/yosys/bin/" CMAKE_FLAGS="-DYOSYS_SLANG_REVISION=unknown -DSLANG_REVISION=unknown"
+        eval ${NICE} cmake -B tools/yosys/build tools/yosys \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DYOSYS_SKIP_ABC_SUBMODULE_CHECK=ON \
+                ${YOSYS_ARGS}
+        ${NICE} cmake --build tools/yosys/build --target install -j "${PROC}"
 
         echo "[INFO FLW-0031] Compiling kepler-formal"
         ${NICE} cmake -B tools/kepler-formal/build tools/kepler-formal \
                 -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_CXX_FLAGS_RELEASE="-Ofast -march=native -ffast-math -flto" \
+                -DCMAKE_CXX_FLAGS_RELEASE="-Ofast -march=x86-64-v3 -ffast-math -flto" \
                 -DCMAKE_EXE_LINKER_FLAGS="-flto" \
                 -DCMAKE_BUILD_RPATH="${DIR}/tools/kepler-formal/build/thirdparty/naja/src/dnl:${DIR}/tools/kepler-formal/build/thirdparty/naja/src/nl/nl:${DIR}/tools/kepler-formal/build/thirdparty/naja/src/optimization" \
                 -DCMAKE_INSTALL_RPATH="${INSTALL_PATH}/kepler-formal/lib" \
