@@ -110,6 +110,22 @@ REPORT_CLOCK_SKEW:
     - route
     - final
   default: 1
+REPORT_ENDPOINT_SLACK:
+  description: >
+    If set to 1, write the setup and hold slack of every timing endpoint at
+    the end of every flow step (e.g. 3_3_place_gp) to
+    $REPORTS_DIR/<step>_endpoint_slack.json. These snapshots can be compared
+    across steps with flow/util/endpointSlack.py. See
+    docs/contrib/EndpointSlackTracking.md.
+  stages:
+    - synth
+    - floorplan
+    - place
+    - cts
+    - grt
+    - route
+    - final
+  default: 0
 SKIP_REPORT_METRICS:
   description: >
     If set to 1, then metrics, report_metrics does nothing. Useful to speed up
@@ -533,6 +549,16 @@ LAYER_PARASITICS_FILE:
   description: |
     Path to per layer parasitics file. Defaults to $(PLATFORM_DIR)/setRC.tcl.
   type: string
+WIRE_LOAD_MODEL:
+  description: |
+    Name of a Liberty wire_load group applied with set_wire_load_model
+    whenever open.tcl reads timing. OpenSTA applies a wire-load model only
+    to nets without parasitics, so it gives wire delay to timing read
+    before placement and leaves placed and routed timing unaffected. An
+    unknown name is an error. Empty, the default, applies none. A platform
+    whose libraries define no wire_load group can supply one in a Liberty
+    file listed in ADDITIONAL_LIBS.
+  type: string
 TAPCELL_TCL:
   description: |
     Path to Endcap and Welltie cells file.
@@ -924,9 +950,6 @@ DISABLE_VIA_GEN:
     Passed as -disable_via_gen to detailed_route.
   stages:
     - route
-MACRO_EXTENSION:
-  description: |
-    Sets the number of GCells added to the blockages boundaries from macros.
 DETAILED_ROUTE_END_ITERATION:
   description: >
     Maximum number of iterations.
@@ -946,9 +969,6 @@ OR_SEED:
 RCX_RULES:
   description: |
     RC Extraction rules file path.
-SET_RC_TCL:
-  description: |
-    Metal & Via RC definition file path.
 FILL_CONFIG:
   description: |
     JSON rule file for metal fill during chip finishing.
@@ -985,14 +1005,6 @@ SDC_FILE:
     The path to design constraint (SDC) file.
   stages:
     - synth
-SDC_GUT:
-  description: >
-    Load design and remove all internal logic before doing synthesis. This is
-    useful when creating a mock .lef abstract that has a smaller area than the
-    amount of logic would allow. bazel-orfs uses this to mock SRAMs, for
-    instance.
-  stages:
-    - synth
 ADDITIONAL_FILES:
   description: |
     Additional files to be added to `make issue` archive.
@@ -1025,6 +1037,13 @@ ABC_AREA:
   stages:
     - synth
   default: 0
+ABC_SCRIPT:
+  description: |
+    Replaces the ABC script synthesis runs, so that a design can vendor and
+    change it. Ignored when SYNTH_WRAPPED_OPERATORS or SWAP_ARITH_OPERATORS
+    is set: abc_new then maps each arithmetic operator with its own script.
+  stages:
+    - synth
 PWR_NETS_VOLTAGES:
   description: |
     Used for IR Drop calculation.
@@ -1173,11 +1192,6 @@ CTS_CLUSTER_SIZE:
 CTS_LIB_NAME:
   description: |
     Name of the Liberty library to use in selecting the clock buffers.
-  stages:
-    - cts
-CTS_SNAPSHOT:
-  description: |
-    Creates ODB/SDC files prior to clock net and setup/hold repair.
   stages:
     - cts
 POST_CTS_TCL:
@@ -1549,12 +1563,6 @@ FLOW_VARIANT:
   description: >
     Flow variant to use, used in the flow variant directory name.
   default: base
-SKIP_ANTENNA_REPAIR_PRE_GRT:
-  default: 0
-  description: >
-    Skips antenna repair pre-global routing.
-  stages:
-    - grt
 SKIP_ANTENNA_REPAIR_POST_DRT:
   default: 0
   description: >
