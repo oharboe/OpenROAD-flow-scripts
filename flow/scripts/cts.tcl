@@ -1,6 +1,6 @@
 utl::set_metrics_stage "cts__{}"
 source $::env(SCRIPTS_DIR)/load.tcl
-source $::env(SCRIPTS_DIR)/lec_check.tcl
+source $::env(SCRIPTS_DIR)/formal_check.tcl
 erase_non_stage_variables cts
 load_design 3_place.odb 3_place.sdc
 source_step_tcl PRE CTS
@@ -36,7 +36,7 @@ set_dont_use $::env(DONT_USE_CELLS)
 log_cmd clock_tree_synthesis {*}$cts_args
 
 utl::push_metrics_stage "cts__{}__pre_repair_timing"
-log_cmd estimate_parasitics -placement
+log_cmd estimate_parasitics
 if { $::env(DETAILED_METRICS) } {
   report_metrics 4 "cts pre-repair-timing"
 }
@@ -46,18 +46,16 @@ set_placement_padding -global \
   -left $::env(CELL_PAD_IN_SITES_DETAIL_PLACEMENT) \
   -right $::env(CELL_PAD_IN_SITES_DETAIL_PLACEMENT)
 
-set dpl_args {}
-append_env_var dpl_args USE_NEGOTIATION -use_negotiation 0
-set result [catch { log_cmd detailed_placement {*}$dpl_args } msg]
+set result [catch { detailed_placement_helper } msg]
 if { $result != 0 } {
   save_progress 4_1_error
   error "Detailed placement failed in CTS: $msg"
 }
 
-log_cmd estimate_parasitics -placement
+log_cmd estimate_parasitics
 
 if { $::env(CTS_SNAPSHOTS) } {
-  save_progress 4_1_pre_repair_hold_setup
+  save_progress 4_1_pre_repair_setup_hold
 }
 
 if { !$::env(SKIP_CTS_REPAIR_TIMING) } {
@@ -73,13 +71,15 @@ if { !$::env(SKIP_CTS_REPAIR_TIMING) } {
     run_lec_test 4_rsz 4_before_rsz_lec.v 4_after_rsz_lec.v
   }
 
-  set result [catch { log_cmd detailed_placement {*}$dpl_args } msg]
+  set result [catch { detailed_placement_helper } msg]
   if { $result != 0 } {
     save_progress 4_1_error
     error "Detailed placement failed in CTS: $msg"
   }
 
   check_placement -verbose
+
+  log_cmd estimate_parasitics
 }
 
 report_metrics 4 "cts final"

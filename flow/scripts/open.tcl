@@ -50,21 +50,23 @@ proc read_timing { input_file } {
   } else {
     log_cmd source $::env(PLATFORM_DIR)/setRC.tcl
   }
+  if { [env_var_exists_and_non_empty WIRE_LOAD_MODEL] } {
+    # OpenSTA applies a wire-load model only to nets without parasitics.
+    log_cmd set_wire_load_model -name $::env(WIRE_LOAD_MODEL)
+  }
   if { $design_stage >= 4 } {
     # CTS has run, so propagate clocks
     set_propagated_clock [all_clocks]
   }
 
-  if { $design_stage >= 6 && [file exist $::env(RESULTS_DIR)/6_final.spef] } {
+  if {
+    [file rootname [file tail $input_file]] == "6_final"
+    && [final_extracts_parasitics]
+  } {
     log_cmd read_spef $::env(RESULTS_DIR)/6_final.spef
-  } elseif { $design_stage >= 5 } {
-    if { [log_cmd grt::have_routes] } {
-      log_cmd estimate_parasitics -global_routing
-    } else {
-      puts "No global routing results available, skipping estimate_parasitics"
-    }
-  } elseif { $design_stage >= 3 } {
-    log_cmd estimate_parasitics -placement
+  }
+  if { [grt::design_is_placed] } {
+    log_cmd estimate_parasitics
   }
 
   # Warm up OpenSTA, so clicking on timing related buttons reacts faster
@@ -76,6 +78,11 @@ if { [ord::openroad_gui_compiled] } {
   set db_basename [file rootname [file tail $input_file]]
   gui::set_title \
     "OpenROAD - $::env(PLATFORM)/$::env(DESIGN_NICKNAME)/$::env(FLOW_VARIANT) - ${db_basename}"
+}
+
+if { [env_var_equals LIB_MODEL CCS] } {
+  puts "Using CCS delay calculation"
+  log_cmd set_delay_calculator prima
 }
 
 if { $::env(GUI_TIMING) } {
