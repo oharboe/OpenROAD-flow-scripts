@@ -21,14 +21,15 @@ usage: $0 [CMD] [OPTIONS]
   push                          Push the docker image to Docker Hub
 
   OPTIONS:
-  -os=OS_NAME                   Choose between ubuntu20.04 and ubuntu22.04 (default).
+  -os=OS_NAME                   Use ubuntu22.04 (default).
   -target=TARGET                Choose target for the Docker image:
                                   'dev': os + packages to compile app
                                   'builder': os + packages to compile app +
                                              copy source code and build app
   -threads=N                    Max number of threads to use if compiling.
                                   Default = \$(nproc)
-  -tag=TAG                      Use as the image tag. Default is git commit sha.
+  -tag=TAG                      Use as the image tag. Default is a hash of
+                                the files that define the image.
   -username=USERNAME            Username to loging at the docker registry.
   -password=PASSWORD            Password to loging at the docker registry.
   -ci                           Install CI tools in image
@@ -44,9 +45,6 @@ EOF
 
 _setup() {
     case "${os}" in
-        "ubuntu20.04")
-            osBaseImage="ubuntu:20.04"
-            ;;
         "ubuntu22.04")
             osBaseImage="ubuntu:22.04"
             ;;
@@ -66,9 +64,6 @@ _setup() {
             fromImage="${FROM_IMAGE_OVERRIDE:-"${org}/flow-${os}-dev"}:${imageTag}"
             context="."
             buildArgs+=" --build-arg numThreads=${numThreads}"
-            orVersion=$(git -C tools/OpenROAD describe --tags)
-            echo "OpenROAD version: ${orVersion}"
-            buildArgs+=" --build-arg openroadVersion=${orVersion}"
             ;;
         "dev" )
             fromImage="${FROM_IMAGE_OVERRIDE:-$osBaseImage}"
