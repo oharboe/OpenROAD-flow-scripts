@@ -26,6 +26,8 @@ set global_placement_args {}
 # Parameters for routability mode in global placement
 append_env_var global_placement_args GPL_ROUTABILITY_DRIVEN -routability_driven 0
 
+append_env_var global_placement_args GPL_RANDOM_SEED -random_seed 1
+
 # Parameters for timing driven mode in global placement
 if { $::env(GPL_TIMING_DRIVEN) } {
   lappend global_placement_args {-timing_driven}
@@ -49,6 +51,12 @@ lappend global_placement_args -force_center_initial_place
 lappend global_placement_args -min_phi_coef $::env(MIN_PLACE_STEP_COEF)
 lappend global_placement_args -max_phi_coef $::env(MAX_PLACE_STEP_COEF)
 
+set place_ios [expr { $::env(GPL_PLACE_IOS) && ![pins_fixed_in_floorplan] }]
+if { $place_ios } {
+  log_cmd set_place_config {*}[place_pins_args_to_place_config]
+  lappend global_placement_args -place_ios
+}
+
 proc do_placement { global_placement_args } {
   set all_args [concat [list -density [place_density_with_lb_addon] \
     -pad_left $::env(CELL_PAD_IN_SITES_GLOBAL_PLACEMENT) \
@@ -61,6 +69,9 @@ proc do_placement { global_placement_args } {
 }
 
 set result [catch { do_placement $global_placement_args } errMsg]
+if { $place_ios } {
+  log_cmd reset_place_config
+}
 if { $result != 0 } {
   orfs_write_db $::env(RESULTS_DIR)/3_3_place_gp-failed.odb
   error $errMsg
