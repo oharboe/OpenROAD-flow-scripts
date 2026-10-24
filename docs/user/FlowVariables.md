@@ -316,6 +316,8 @@ configuration file.
 | <a name="SYNTH_SKIP_KEEP"></a>SYNTH_SKIP_KEEP| Only meaningful together with SYNTH_CHECKPOINT. When set, signals that the supplied checkpoint is still canonical RTLIL (coarse synth and `keep_hierarchy` have not been run yet), so synth.tcl runs the full coarse+fine synthesis flattened. When unset and SYNTH_CHECKPOINT is used, synth.tcl assumes the checkpoint already has coarse synth + `keep_hierarchy` done and resumes from `coarse:fine`.| 0|
 | <a name="SYNTH_SLANG_ARGS"></a>SYNTH_SLANG_ARGS| Additional arguments passed to the slang frontend during synthesis.| |
 | <a name="SYNTH_USE_SYN"></a>SYNTH_USE_SYN| If set to 1, run synthesis using the "syn" tool built into OpenROAD (the synth_syn.tcl flow) instead of the default Yosys-based flow. Defaults to 0 (Yosys flow).| 0|
+| <a name="SYNTH_VERILOG_SURGERY"></a>SYNTH_VERILOG_SURGERY| RTL surgery as a step of the flow: a script that copies VERILOG_FILES and edits the copies before synthesis reads them, so vendored RTL stays byte-identical to upstream and the OpenROAD- and PDK-specific changes live in one script next to the design's config.mk. Typical surgery gives a memory or register file a module of its own that AUTO_MEMORIES can convert, maps a clock gate onto the platform's, rewrites a pragma for the frontend, or removes a simulation construct. A new upstream version is then a plain copy: the surgery reapplies, or stops where upstream moved. Best on generated or regular RTL (firtool, sv2v, netlists); a text edit cannot see the meaning of include files, macros, packages or `bind`. As the RTL is read (canonicalization, memory extraction, and the SYNTH_USE_SYN frontend), it runs with SYNTH_VERILOG_SURGERY_ARGS, then `--out-dir $(OBJECTS_DIR)/surgery --` and the VERILOG_FILES (by PYTHON_EXE when it ends in .py), and writes one copy per source under the same file name; synthesis reads the copies. Input file names must be unique. Diff a copy against its original to see exactly what the surgery changed. The script should fail when it does not recognise its input; a failing script, or a copy it did not write, stops synthesis.| |
+| <a name="SYNTH_VERILOG_SURGERY_ARGS"></a>SYNTH_VERILOG_SURGERY_ARGS| Arguments to SYNTH_VERILOG_SURGERY, before the ones the flow adds.| |
 | <a name="SYNTH_WRAPPED_ADDERS"></a>SYNTH_WRAPPED_ADDERS| Specify the adder modules that can be used for synthesis, separated by commas. The default adder module is determined by the first element of this variable.| |
 | <a name="SYNTH_WRAPPED_MULTIPLIERS"></a>SYNTH_WRAPPED_MULTIPLIERS| Specify the multiplier modules that can be used for synthesis, separated by commas. The default multiplier module is determined by the first element of this variable.| |
 | <a name="SYNTH_WRAPPED_OPERATORS"></a>SYNTH_WRAPPED_OPERATORS| Synthesize multiple architectural options for each arithmetic operator in the design. These options are available for switching among in later stages of the flow.| 0|
@@ -335,6 +337,7 @@ configuration file.
 | <a name="VIA_IN_PIN_MAX_LAYER"></a>VIA_IN_PIN_MAX_LAYER| Passed as -via_in_pin_top_layer to pin_access and detailed_route.| |
 | <a name="VIA_IN_PIN_MIN_LAYER"></a>VIA_IN_PIN_MIN_LAYER| Passed as -via_in_pin_bottom_layer to pin_access and detailed_route.| |
 | <a name="WIRE_LOAD_MODEL"></a>WIRE_LOAD_MODEL| Name of a Liberty wire_load group applied with set_wire_load_model whenever open.tcl reads timing. OpenSTA applies a wire-load model only to nets without parasitics, so it gives wire delay to timing read before placement and leaves placed and routed timing unaffected. An unknown name is an error. Empty, the default, applies none. A platform whose libraries define no wire_load group can supply one in a Liberty file listed in ADDITIONAL_LIBS.| |
+| <a name="WRITE_ABSTRACT_LEF_ARGS"></a>WRITE_ABSTRACT_LEF_ARGS| Arguments to write_abstract_lef when it writes a block's abstract. The default obstructs every layer the block uses over its whole outline. Empty, the abstract obstructs only the shapes the block occupies, so a block whose outline holds a notch, where other macros sit, leaves the notch free for them.| -bloat_occupied_layers|
 | <a name="WRITE_ODB_AND_SDC_EACH_STAGE"></a>WRITE_ODB_AND_SDC_EACH_STAGE| Save out .sdc and .odb file after each stage, useful to disable when using a single OpenROAD instance to run all stages of the flow.| 1|
 | <a name="YOSYS_FLAGS"></a>YOSYS_FLAGS| Flags to pass to yosys.| -v 3|
 ## synth variables
@@ -384,6 +387,8 @@ configuration file.
 - [SYNTH_SKIP_KEEP](#SYNTH_SKIP_KEEP)
 - [SYNTH_SLANG_ARGS](#SYNTH_SLANG_ARGS)
 - [SYNTH_USE_SYN](#SYNTH_USE_SYN)
+- [SYNTH_VERILOG_SURGERY](#SYNTH_VERILOG_SURGERY)
+- [SYNTH_VERILOG_SURGERY_ARGS](#SYNTH_VERILOG_SURGERY_ARGS)
 - [SYNTH_WRAPPED_ADDERS](#SYNTH_WRAPPED_ADDERS)
 - [SYNTH_WRAPPED_MULTIPLIERS](#SYNTH_WRAPPED_MULTIPLIERS)
 - [TIEHI_CELL_AND_PORT](#TIEHI_CELL_AND_PORT)
@@ -642,6 +647,7 @@ configuration file.
 ## generate_abstract variables
 
 - [ABSTRACT_SOURCE](#ABSTRACT_SOURCE)
+- [WRITE_ABSTRACT_LEF_ARGS](#WRITE_ABSTRACT_LEF_ARGS)
 
 ## Uncategorized variables
 
