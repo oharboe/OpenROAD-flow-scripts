@@ -27,6 +27,8 @@ export PLACE_DENSITY = 0.35
 
 export MACRO_WRAPPERS = $(DESIGN_HOME)/$(PLATFORM)/$(DESIGN_NICKNAME)/wrappers.tcl
 
+export RTLMP_MIN_CHANNEL_SIZE = 20 20
+
 export DIE_AREA    = 0 0 752 752
 export CORE_AREA   = 2 2 750 750
 export IO_CONSTRAINTS     = $(DESIGN_HOME)/$(PLATFORM)/$(DESIGN_NICKNAME)/io.tcl
@@ -40,5 +42,3 @@ endif
 export SWAP_ARITH_OPERATORS = 1
 export OPENROAD_HIERARCHICAL = 1
 
-# Temporarily disable LEC until RAM issue can be resolved with KF
-export LEC_CHECK = 0
