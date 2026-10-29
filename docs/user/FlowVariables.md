@@ -277,6 +277,7 @@ configuration file.
 | <a name="SEAL_GDS"></a>SEAL_GDS| Seal macro to place around the design.| |
 | <a name="SEC_CHECK"></a>SEC_CHECK| Perform a sequential equivalence check between the initial synthesis netlist and final netlist with the Kepler Formal PDR engine. If this fails, report an issue to OpenROAD.| 0|
 | <a name="SETUP_MOVE_SEQUENCE"></a>SETUP_MOVE_SEQUENCE| Passed as -sequence to repair_timing. This should be a string of move keywords separated by commas.| |
+| <a name="SETUP_REPAIR_PHASES"></a>SETUP_REPAIR_PHASES| Passed as -phases to repair_timing. This should be a string of setup repair phase names separated by spaces. Set to PARALLEL_EVAL to repair setup timing with the experimental parallel evaluation policy. When unset, repair_timing runs its default phases.| |
 | <a name="SETUP_SLACK_MARGIN"></a>SETUP_SLACK_MARGIN| Specifies a time margin for the slack when fixing setup violations. This option allows you to overfix or underfix(negative value, terminate retiming before 0 or positive slack). See HOLD_SLACK_MARGIN for more details.| 0|
 | <a name="SKIP_ANTENNA_REPAIR"></a>SKIP_ANTENNA_REPAIR| Skips antenna repair entirely.| 0|
 | <a name="SKIP_ANTENNA_REPAIR_POST_DRT"></a>SKIP_ANTENNA_REPAIR_POST_DRT| Skips antenna repair post-detailed routing.| 0|
@@ -290,7 +291,7 @@ configuration file.
 | <a name="SKIP_LAST_GASP"></a>SKIP_LAST_GASP| Do not use last gasp optimization to fix timing violations (default: use gate last gasp).| |
 | <a name="SKIP_PIN_SWAP"></a>SKIP_PIN_SWAP| Do not use pin swapping as a transform to fix timing violations (default: use pin swapping).| |
 | <a name="SKIP_REPAIR_TIE_FANOUT"></a>SKIP_REPAIR_TIE_FANOUT| Skip repair_tie_fanout at floorplan step.| 0|
-| <a name="SKIP_REPORT_METRICS"></a>SKIP_REPORT_METRICS| If set to 1, then metrics, report_metrics does nothing. Useful to speed up builds.| 0|
+| <a name="SKIP_REPORT_METRICS"></a>SKIP_REPORT_METRICS| If set to 1, report_metrics writes only the metrics that cost no analysis: design area, instance counts and utilization. Timing, power, clock skew, the max slew/cap/fanout checks and the `reports/<stage>_*.rpt` text reports are skipped; they need a timing update and a power analysis at every stage that calls it. The counters the tools record as they run (placement, legalization, routing, repair, warnings) are written either way.| 0|
 | <a name="SKIP_VT_SWAP"></a>SKIP_VT_SWAP| Do not perform VT swap to improve QoR (default: do VT swap).| |
 | <a name="SLEW_MARGIN"></a>SLEW_MARGIN| Specifies a slew margin when fixing max slew violations. This option allows you to overfix.| |
 | <a name="SWAP_ARITH_OPERATORS"></a>SWAP_ARITH_OPERATORS| Improve timing QoR by swapping ALU and MULT arithmetic operators.| 0|
@@ -457,6 +458,7 @@ configuration file.
 - [RTLMP_RPT_DIR](#RTLMP_RPT_DIR)
 - [RTLMP_WIRELENGTH_WT](#RTLMP_WIRELENGTH_WT)
 - [SETUP_MOVE_SEQUENCE](#SETUP_MOVE_SEQUENCE)
+- [SETUP_REPAIR_PHASES](#SETUP_REPAIR_PHASES)
 - [SETUP_SLACK_MARGIN](#SETUP_SLACK_MARGIN)
 - [SKIP_BUFFER_REMOVAL](#SKIP_BUFFER_REMOVAL)
 - [SKIP_CRIT_VT_SWAP](#SKIP_CRIT_VT_SWAP)
@@ -516,6 +518,7 @@ configuration file.
 - [PRE_RESIZE_TCL](#PRE_RESIZE_TCL)
 - [REPORT_ENDPOINT_SLACK](#REPORT_ENDPOINT_SLACK)
 - [ROUTING_LAYER_ADJUSTMENT](#ROUTING_LAYER_ADJUSTMENT)
+- [SETUP_REPAIR_PHASES](#SETUP_REPAIR_PHASES)
 - [SKIP_REPORT_METRICS](#SKIP_REPORT_METRICS)
 - [TNS_END_PERCENT](#TNS_END_PERCENT)
 
@@ -540,6 +543,7 @@ configuration file.
 - [REPORT_CLOCK_SKEW](#REPORT_CLOCK_SKEW)
 - [REPORT_ENDPOINT_SLACK](#REPORT_ENDPOINT_SLACK)
 - [SETUP_MOVE_SEQUENCE](#SETUP_MOVE_SEQUENCE)
+- [SETUP_REPAIR_PHASES](#SETUP_REPAIR_PHASES)
 - [SETUP_SLACK_MARGIN](#SETUP_SLACK_MARGIN)
 - [SKIP_BUFFER_REMOVAL](#SKIP_BUFFER_REMOVAL)
 - [SKIP_CRIT_VT_SWAP](#SKIP_CRIT_VT_SWAP)
@@ -571,6 +575,7 @@ configuration file.
 - [REPORT_ENDPOINT_SLACK](#REPORT_ENDPOINT_SLACK)
 - [ROUTING_LAYER_ADJUSTMENT](#ROUTING_LAYER_ADJUSTMENT)
 - [SETUP_MOVE_SEQUENCE](#SETUP_MOVE_SEQUENCE)
+- [SETUP_REPAIR_PHASES](#SETUP_REPAIR_PHASES)
 - [SETUP_SLACK_MARGIN](#SETUP_SLACK_MARGIN)
 - [SKIP_ANTENNA_REPAIR](#SKIP_ANTENNA_REPAIR)
 - [SKIP_BUFFER_REMOVAL](#SKIP_BUFFER_REMOVAL)
