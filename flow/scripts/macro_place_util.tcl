@@ -26,47 +26,47 @@ if { [find_macros] != "" } {
     }
   }
 
-  lassign $::env(MACRO_PLACE_HALO) halo_x halo_y
-  set halo_max [expr max($halo_x, $halo_y)]
-  set blockage_width $halo_max
-
-  if { [env_var_exists_and_non_empty MACRO_BLOCKAGE_HALO] } {
-    set blockage_width $::env(MACRO_BLOCKAGE_HALO)
-  }
-
   if { [env_var_exists_and_non_empty MACRO_PLACEMENT_TCL] } {
     log_cmd source $::env(MACRO_PLACEMENT_TCL)
   }
 
-  set additional_rtlmp_args ""
-  append_env_var additional_rtlmp_args RTLMP_MAX_LEVEL -max_num_level 1
-  append_env_var additional_rtlmp_args RTLMP_MAX_INST -max_num_inst 1
-  append_env_var additional_rtlmp_args RTLMP_MIN_INST -min_num_inst 1
-  append_env_var additional_rtlmp_args RTLMP_MAX_MACRO -max_num_macro 1
-  append_env_var additional_rtlmp_args RTLMP_MIN_MACRO -min_num_macro 1
-  append additional_rtlmp_args " -halo_width $halo_x"
-  append additional_rtlmp_args " -halo_height $halo_y"
-  append_env_var additional_rtlmp_args RTLMP_MIN_AR -min_ar 1
-  append_env_var additional_rtlmp_args RTLMP_AREA_WT -area_weight 1
-  append_env_var additional_rtlmp_args RTLMP_WIRELENGTH_WT -wirelength_weight 1
-  append_env_var additional_rtlmp_args RTLMP_OUTLINE_WT -outline_weight 1
-  append_env_var additional_rtlmp_args RTLMP_BOUNDARY_WT -boundary_weight 1
-  append_env_var additional_rtlmp_args RTLMP_NOTCH_WT -notch_weight 1
-  append_env_var additional_rtlmp_args RTLMP_RPT_DIR -report_directory 1
-  append_env_var additional_rtlmp_args RTLMP_FENCE_LX -fence_lx 1
-  append_env_var additional_rtlmp_args RTLMP_FENCE_LY -fence_ly 1
-  append_env_var additional_rtlmp_args RTLMP_FENCE_UX -fence_ux 1
-  append_env_var additional_rtlmp_args RTLMP_FENCE_UY -fence_uy 1
+  set deprecated {}
+  append_env_var deprecated RTLMP_MAX_LEVEL -max_num_level 1
+  append_env_var deprecated RTLMP_MAX_INST -max_num_inst 1
+  append_env_var deprecated RTLMP_MIN_INST -min_num_inst 1
+  append_env_var deprecated RTLMP_MAX_MACRO -max_num_macro 1
+  append_env_var deprecated RTLMP_MIN_MACRO -min_num_macro 1
 
-  append additional_rtlmp_args " -target_util [place_density_with_lb_addon]"
+  if { ![env_var_exists_and_non_empty RTLMP_MIN_CHANNEL_SIZE] } {
+    set ::env(RTLMP_PIN_AWARE_CHANNELS) 0
+  }
+  append_env_var deprecated RTLMP_MIN_CHANNEL_SIZE -min_channel_size 1
+  append_env_var deprecated RTLMP_PIN_AWARE_CHANNELS \
+    -pin_aware_channels 0
+  append_env_var deprecated RTLMP_MIN_AR -min_ar 1
+  append_env_var deprecated RTLMP_AREA_WT -area_weight 1
+  append_env_var deprecated RTLMP_WIRELENGTH_WT -wirelength_weight 1
+  append_env_var deprecated RTLMP_OUTLINE_WT -outline_weight 1
+  append_env_var deprecated RTLMP_BOUNDARY_WT -boundary_weight 1
+  append_env_var deprecated RTLMP_NOTCH_WT -notch_weight 1
+  append_env_var deprecated RTLMP_RPT_DIR -report_directory 1
+  append_env_var deprecated RTLMP_KEEP_CLUSTERING \
+    -keep_clustering_data 0
+  append_env_var deprecated RTLMP_FENCE_LX -fence_lx 1
+  append_env_var deprecated RTLMP_FENCE_LY -fence_ly 1
+  append_env_var deprecated RTLMP_FENCE_UX -fence_ux 1
+  append_env_var deprecated RTLMP_FENCE_UY -fence_uy 1
 
-  set all_args $additional_rtlmp_args
+  set all_args [list {*}$deprecated -target_util [place_density_with_lb_addon]]
 
+  # RTLMP_ARGS, deprecated, replaces the flow's arguments.
   if { [env_var_exists_and_non_empty RTLMP_ARGS] } {
     set all_args $::env(RTLMP_ARGS)
+    set deprecated $all_args
   }
 
-  log_cmd rtl_macro_placer {*}$all_args
+  log_cmd rtl_macro_placer \
+    {*}[command_args rtl_macro_placer floorplan.main $all_args $deprecated]
 } else {
   puts "No macros found: Skipping macro_placement"
 }
