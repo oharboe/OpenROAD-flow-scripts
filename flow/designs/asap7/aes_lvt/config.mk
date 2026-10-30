@@ -13,9 +13,10 @@ export CORE_ASPECT_RATIO      = 1
 export CORE_MARGIN            = 2
 export PLACE_DENSITY          = 0.65
 export TNS_END_PERCENT        = 100
+export SETUP_REPAIR_PHASES = PARALLEL_EVAL
 
 export ASAP7_USE_VT           = LVT
 
 export RECOVER_POWER          = 100
 
-
+export SYNTH_USE_SYN = 1

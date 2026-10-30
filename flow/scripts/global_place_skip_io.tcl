@@ -1,5 +1,10 @@
 source $::env(SCRIPTS_DIR)/load.tcl
 erase_non_stage_variables place
+if { $::env(GPL_PLACE_IOS) } {
+  orfs_copy_db $::env(RESULTS_DIR)/2_floorplan.odb \
+    $::env(RESULTS_DIR)/3_1_place_gp_skip_io.odb
+  return
+}
 load_design 2_floorplan.odb 2_floorplan.sdc
 source_step_tcl PRE GLOBAL_PLACE_SKIP_IO
 
@@ -8,10 +13,14 @@ if { [env_var_exists_and_non_empty FLOORPLAN_DEF] } {
 } elseif { [all_pins_placed] } {
   puts "All pins are placed. Skipping global placement without IOs"
 } else {
-  log_cmd global_placement -skip_io -density [place_density_with_lb_addon] \
+  set deprecated {}
+  append_env_var deprecated GPL_RANDOM_SEED -random_seed 1
+  set flow [list -skip_io -density [place_density_with_lb_addon] \
     -pad_left $::env(CELL_PAD_IN_SITES_GLOBAL_PLACEMENT) \
-    -pad_right $::env(CELL_PAD_IN_SITES_GLOBAL_PLACEMENT) \
-    {*}[env_var_or_empty GLOBAL_PLACEMENT_ARGS]
+    -pad_right $::env(CELL_PAD_IN_SITES_GLOBAL_PLACEMENT) {*}$deprecated]
+
+  log_cmd global_placement \
+    {*}[command_args global_placement place.skip_io $flow $deprecated]
 }
 
 source_step_tcl POST GLOBAL_PLACE_SKIP_IO
