@@ -27,32 +27,63 @@ proc log_cmd { cmd args } {
   return $result
 }
 
-proc repair_timing_helper { args } {
-  set additional_args {}
-  append_env_var additional_args SETUP_SLACK_MARGIN -setup_margin 1
-  append_env_var additional_args HOLD_SLACK_MARGIN -hold_margin 1
-  append_env_var additional_args SETUP_MOVE_SEQUENCE -sequence 1
-  append_env_var additional_args TNS_END_PERCENT -repair_tns 1
-  append_env_var additional_args SKIP_PIN_SWAP -skip_pin_swap 0
-  append_env_var additional_args SKIP_GATE_CLONING -skip_gate_cloning 0
-  append_env_var additional_args SKIP_BUFFER_REMOVAL -skip_buffer_removal 0
-  append_env_var additional_args SKIP_LAST_GASP -skip_last_gasp 0
-  append_env_var additional_args SKIP_VT_SWAP -skip_vt_swap 0
-  append_env_var additional_args SKIP_CRIT_VT_SWAP -skip_crit_vt_swap 0
-  append_env_var additional_args MATCH_CELL_FOOTPRINT -match_cell_footprint 0
-  lappend additional_args {*}$args -verbose
-
-  log_cmd repair_timing {*}$additional_args
+# Arguments to one call of a command: the flow's, edited by PLATFORM_ARGS and
+# the command's <COMMAND>_ARGS (docs/user/CommandArguments.md). args.py
+# merges them, so the merge has unit tests (flow/test/test_args.py). call is
+# stage.name, as a user scopes an edit to it. flow is the command line the
+# flow passes, deprecated variables included; deprecated is the part of it
+# deprecated variables add.
+proc command_args { cmd call flow { deprecated {} } { legacy {} } } {
+  set out [exec $::env(PYTHON_EXE) $::env(SCRIPTS_DIR)/args.py resolve \
+    $cmd $call 1 [llength $flow] {*}$flow [llength $deprecated] {*}$deprecated \
+    {*}$legacy 2>@ stderr]
+  return [lrange [split $out \n] 1 end]
 }
 
-proc repair_design_helper { } {
+# Whether a call runs: run is the flow's choice, and on or off in
+# PLATFORM_ARGS or <COMMAND>_ARGS changes it.
+proc command_runs { cmd call run } {
+  return [exec $::env(PYTHON_EXE) $::env(SCRIPTS_DIR)/args.py runs $cmd $call $run 2>@ stderr]
+}
+
+proc repair_timing_helper { call args } {
+  set deprecated {}
+  append_env_var deprecated SETUP_SLACK_MARGIN -setup_margin 1
+  append_env_var deprecated HOLD_SLACK_MARGIN -hold_margin 1
+  append_env_var deprecated SETUP_MOVE_SEQUENCE -sequence 1
+  append_env_var deprecated SETUP_REPAIR_PHASES -phases 1
+  append_env_var deprecated TNS_END_PERCENT -repair_tns 1
+  append_env_var deprecated SKIP_PIN_SWAP -skip_pin_swap 0
+  append_env_var deprecated SKIP_GATE_CLONING -skip_gate_cloning 0
+  append_env_var deprecated SKIP_BUFFER_REMOVAL -skip_buffer_removal 0
+  append_env_var deprecated SKIP_LAST_GASP -skip_last_gasp 0
+  append_env_var deprecated SKIP_VT_SWAP -skip_vt_swap 0
+  append_env_var deprecated SKIP_CRIT_VT_SWAP -skip_crit_vt_swap 0
+  set flow $deprecated
+  append_env_var flow MATCH_CELL_FOOTPRINT -match_cell_footprint 0
+  lappend flow {*}$args -verbose
+
+  log_cmd repair_timing {*}[command_args repair_timing $call $flow $deprecated]
+}
+
+# Every detailed_placement in the flow goes through here, so the design's
+# DETAILED_PLACEMENT_ARGS (the legalizer and its window, say) apply to the
+# placement stage and to every re-legalization after it alike.
+proc detailed_placement_helper { call args } {
+  set deprecated [env_var_or_empty DETAIL_PLACEMENT_ARGS]
+  log_cmd detailed_placement \
+    {*}[command_args detailed_placement $call [concat $deprecated $args] $deprecated]
+}
+
+proc repair_design_helper { call } {
   puts "Perform buffer insertion and gate resizing..."
 
-  set additional_args "-verbose"
-  append_env_var additional_args CAP_MARGIN -cap_margin 1
-  append_env_var additional_args SLEW_MARGIN -slew_margin 1
-  append_env_var additional_args MATCH_CELL_FOOTPRINT -match_cell_footprint 0
-  log_cmd repair_design {*}$additional_args
+  set deprecated {}
+  append_env_var deprecated CAP_MARGIN -cap_margin 1
+  append_env_var deprecated SLEW_MARGIN -slew_margin 1
+  set flow [list -verbose {*}$deprecated]
+  append_env_var flow MATCH_CELL_FOOTPRINT -match_cell_footprint 0
+  log_cmd repair_design {*}[command_args repair_design $call $flow $deprecated]
 }
 
 proc recover_power_helper { } {
@@ -67,7 +98,7 @@ proc recover_power_helper { } {
   set additional_args "-verbose"
   append_env_var additional_args RECOVER_POWER -recover_power 1
   append_env_var additional_args MATCH_CELL_FOOTPRINT -match_cell_footprint 0
-  log_cmd repair_timing {*}$additional_args
+  log_cmd repair_timing {*}[command_args repair_timing grt.recover_power $additional_args]
   report_tns
   report_wns
   report_power
@@ -145,6 +176,43 @@ proc env_var_or_empty { env_var } {
   return ""
 }
 
+proc pins_fixed_in_floorplan { } {
+  return [expr {
+    [env_var_exists_and_non_empty FLOORPLAN_DEF] ||
+    [env_var_exists_and_non_empty FOOTPRINT] ||
+    [env_var_exists_and_non_empty FOOTPRINT_TCL]
+  }]
+}
+
+# set_place_config arguments for global_placement -place_ios, from the
+# place_pins settings.
+proc place_pins_args_to_place_config { } {
+  set config_args [list \
+    -io_pin_hor_layers $::env(IO_PLACER_H) \
+    -io_pin_ver_layers $::env(IO_PLACER_V)]
+  set pins_args [command_args place_pins place.main {}]
+  for { set i 0 } { $i < [llength $pins_args] } { incr i } {
+    set arg [lindex $pins_args $i]
+    switch -- $arg {
+      -corner_avoidance -
+      -min_distance {
+        lappend config_args -io_pin_[string range $arg 1 end] \
+          [lindex $pins_args [incr i]]
+      }
+      -min_distance_in_tracks {
+        lappend config_args -io_pin_min_distance_in_tracks
+      }
+      default {
+        utl::warn FLW 25 "PLACE_PINS_ARGS $arg is not used with GPL_PLACE_IOS."
+        if { ![string match -* [lindex $pins_args [expr { $i + 1 }]]] } {
+          incr i
+        }
+      }
+    }
+  }
+  return $config_args
+}
+
 proc find_macros { } {
   set macros ""
 
@@ -162,6 +230,9 @@ proc find_macros { } {
 }
 
 proc erase_non_stage_variables { stage_name } {
+  # Every <COMMAND>_ARGS is checked before the stage reads one, and the
+  # deprecated variables this stage reads are named with their replacement.
+  exec $::env(PYTHON_EXE) $::env(SCRIPTS_DIR)/args.py check $stage_name 2>@ stderr
   if { $::env(KEEP_VARS) } {
     return
   }
@@ -214,8 +285,8 @@ proc source_env_var_if_exists { env_var } {
 # will be default and this code will be deleted.
 proc hier_options { } {
   if {
-    ([env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] ||
-      [env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]) &&
+    ([env_var_equals SYNTH_WRAPPED_OPERATORS 1] ||
+      [env_var_equals SWAP_ARITH_OPERATORS 1]) &&
     !$::env(OPENROAD_HIERARCHICAL)
   } {
     error "SYNTH_WRAPPED_OPERATORS or SWAP_ARITH_OPERATORS require OPENROAD_HIERARCHICAL to be set."
@@ -295,7 +366,101 @@ proc find_physical_only_masters { } {
   return $physical_only_masters
 }
 
-proc orfs_write_db { output_file } {
+proc endpoint_slack_file { step } {
+  return $::env(REPORTS_DIR)/${step}_endpoint_slack.json
+}
+
+# Write the setup and hold slack of every endpoint at the end of a flow
+# step so they can be compared across steps with
+# flow/util/endpointSlack.py. Parasitics are estimated the same way as
+# open.tcl so that every step is timed consistently, unless the caller
+# has already loaded parasitics (e.g. extracted ones) and passes their
+# name as parasitics.
+proc write_endpoint_slack { step { parasitics "" } } {
+  if { !$::env(REPORT_ENDPOINT_SLACK) || [string match "*-failed" $step] } {
+    return
+  }
+  set filename [endpoint_slack_file $step]
+  puts "Writing endpoint slack to $filename"
+
+  if { $parasitics == "" } {
+    set design_stage [lindex [split $step _] 0]
+    set parasitics none
+    if { $design_stage >= 5 } {
+      if { [grt::have_routes] } {
+        set parasitics global_routing
+      }
+    } elseif { $design_stage >= 3 } {
+      set parasitics placement
+    }
+    if { $parasitics != "none" } {
+      estimate_parasitics -$parasitics
+    }
+  }
+  # Update timing before sta::endpoints: the endpoint set is cached the
+  # first time it is requested and misses gated clock enable checks if the
+  # clock network has not been found yet.
+  sta::find_timing
+
+  set fileId [open $filename w]
+  puts $fileId "{"
+  puts $fileId "\"design\": \"$::env(DESIGN_NAME)\","
+  puts $fileId "\"step\": \"$step\","
+  puts $fileId "\"parasitics\": \"$parasitics\","
+  # Seconds per reported time unit
+  puts $fileId "\"time_unit\": [sta::time_ui_sta 1],"
+  # endpoint: [setup slack, hold slack], null if unconstrained
+  puts $fileId "\"endpoints\": {"
+  set sep ""
+  foreach pin [sta::endpoints] {
+    set name [string map {\\ \\\\ \" \\\"} [get_full_name $pin]]
+    set slacks {}
+    foreach min_max {max min} {
+      set slack [get_property $pin slack_$min_max]
+      if { $slack eq "INF" || $slack eq "-INF" } {
+        set slack null
+      }
+      lappend slacks $slack
+    }
+    puts -nonewline $fileId "$sep\"$name\": \[[join $slacks ,]\]"
+    set sep ",\n"
+  }
+  puts $fileId "\n}"
+  puts $fileId "}"
+  close $fileId
+}
+
+# A step that copies its input .odb leaves the design unchanged, so
+# re-time it if it is loaded, otherwise copy the input step's snapshot.
+proc copy_endpoint_slack { input_file output_file } {
+  if { !$::env(REPORT_ENDPOINT_SLACK) } {
+    return
+  }
+  set step [file rootname [file tail $output_file]]
+  set chip [[ord::get_db] getChip]
+  if { $chip != "NULL" && [$chip getBlock] != "NULL" } {
+    write_endpoint_slack $step
+    return
+  }
+  set input [endpoint_slack_file [file rootname [file tail $input_file]]]
+  if { ![file exists $input] } {
+    return
+  }
+  set fileId [open $input r]
+  set json [read $fileId]
+  close $fileId
+  regsub {"step": "[^"]*"} $json "\"step\": \"$step\"" json
+  set fileId [open [endpoint_slack_file $step] w]
+  puts -nonewline $fileId $json
+  close $fileId
+}
+
+# endpoint_slack 0 is for callers that write the endpoint slack snapshot
+# themselves, e.g. 6_final after parasitic extraction.
+proc orfs_write_db { output_file { endpoint_slack 1 } } {
+  if { $endpoint_slack } {
+    write_endpoint_slack [file rootname [file tail $output_file]]
+  }
   if { !$::env(WRITE_ODB_AND_SDC_EACH_STAGE) } {
     return
   }
@@ -319,6 +484,7 @@ proc orfs_write_sdc { output_file } {
 # mtime with second resolution, which breaks make's timestamp-based
 # up-to-date checks for fast builds.
 proc orfs_copy_db { input_file output_file } {
+  copy_endpoint_slack $input_file $output_file
   if { !$::env(WRITE_ODB_AND_SDC_EACH_STAGE) } {
     return
   }
@@ -328,4 +494,40 @@ proc orfs_copy_db { input_file output_file } {
 proc source_step_tcl { hook_type step_name } {
   set env_var "${hook_type}_${step_name}_TCL"
   source_env_var_if_exists $env_var
+}
+
+# The Verilog files synthesis reads: VERILOG_FILES or, with
+# SYNTH_VERILOG_SURGERY, the copies its script writes. The script runs
+# here, as the RTL is read, into $(OBJECTS_DIR)/surgery: one copy per
+# source under the same file name, kept so a diff against the original
+# shows what the surgery changed. They are no make target and no build
+# output.
+proc synth_verilog_files { } {
+  if { ![env_var_exists_and_non_empty SYNTH_VERILOG_SURGERY] } {
+    return $::env(VERILOG_FILES)
+  }
+  set names [lmap f $::env(VERILOG_FILES) { file tail $f }]
+  if { [llength [lsort -unique $names]] != [llength $names] } {
+    error "SYNTH_VERILOG_SURGERY: VERILOG_FILES has two files of one name;\
+      the copies are named after the originals"
+  }
+  set dir [file join $::env(OBJECTS_DIR) surgery]
+  file delete -force $dir
+  file mkdir $dir
+  set cmd {}
+  if { [file extension [lindex $::env(SYNTH_VERILOG_SURGERY) 0]] eq ".py" } {
+    lappend cmd $::env(PYTHON_EXE)
+  }
+  lappend cmd {*}$::env(SYNTH_VERILOG_SURGERY) \
+    {*}[env_var_or_empty SYNTH_VERILOG_SURGERY_ARGS] \
+    --out-dir $dir -- {*}$::env(VERILOG_FILES)
+  puts "SYNTH_VERILOG_SURGERY: [join $cmd]"
+  exec {*}$cmd >@ stdout 2>@ stderr
+  set copies [lmap name $names { file join $dir $name }]
+  foreach copy $copies {
+    if { ![file exists $copy] } {
+      error "SYNTH_VERILOG_SURGERY wrote no $copy"
+    }
+  }
+  return $copies
 }
