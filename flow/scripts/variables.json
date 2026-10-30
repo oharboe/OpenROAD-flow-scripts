@@ -6,12 +6,6 @@
       "synth"
     ]
   },
-  "ABC_CLOCK_PERIOD_IN_PS": {
-    "description": "Clock period to be used by STA during synthesis. Default value read from `constraint.sdc`.\n",
-    "stages": [
-      "synth"
-    ]
-  },
   "ABC_DRIVER_CELL": {
     "description": "Default driver cell used during ABC synthesis.\n",
     "stages": [
@@ -20,6 +14,12 @@
   },
   "ABC_LOAD_IN_FF": {
     "description": "During synthesis set_load value used.\n",
+    "stages": [
+      "synth"
+    ]
+  },
+  "ABC_SCRIPT": {
+    "description": "Replaces the ABC script synthesis runs, so that a design can vendor and\nchange it. Ignored when SYNTH_WRAPPED_OPERATORS or SWAP_ARITH_OPERATORS\nis set: abc_new then maps each arithmetic operator with its own script.\n",
     "stages": [
       "synth"
     ]
@@ -51,6 +51,12 @@
   "ADDITIONAL_LIBS": {
     "description": "Hardened macro library files listed here. The library information is immutable and used throughout all stages. Not stored in the .odb file.\n"
   },
+  "ADDITIONAL_MEMORIES": {
+    "description": "Experimental. Space-separated list of user-supplied `.memories` files (the memories.json JSON schema) merged onto the set AUTO_MEMORIES detects \u2014 to force-convert a memory the idiomatic gate rejects, or to describe one the scanner cannot find. See docs/user/AutoMemories.md.\n",
+    "stages": [
+      "synth"
+    ]
+  },
   "ADDITIONAL_SITES": {
     "description": "Passed as -additional_sites to initialize_floorplan.\n",
     "stages": [
@@ -64,9 +70,23 @@
       "All stages"
     ]
   },
+  "AUTO_MEMORIES": {
+    "default": 0,
+    "description": "Experimental. When set to 1, memories that yosys infers in the RTL (`$mem_v2` cells, module boundary only) are detected pre-synthesis, inventoried in `$(RESULTS_DIR)/memories.json`, and \u2014 when idiomatic as an SRAM macro \u2014 given generated .lib/.lef views under `$(RESULTS_DIR)/memories/`. Synthesis blackboxes those modules and all later stages read the generated views, so an existing design gets macro-based results without a memory compiler. Supported for the asap7 platform only. See docs/user/AutoMemories.md.\n"
+  },
   "BALANCE_ROWS": {
     "default": 0,
+    "deprecated": 1,
     "description": "Balance rows during placement.\n",
+    "replacement": {
+      "1": "BALANCE_ROW_USAGE_ARGS = on"
+    },
+    "stages": [
+      "place"
+    ]
+  },
+  "BALANCE_ROW_USAGE_ARGS": {
+    "description": "Edits to the arguments the flow passes to `balance_row_usage`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
     "stages": [
       "place"
     ]
@@ -75,7 +95,7 @@
     "description": "Blocks used as hard macros in a hierarchical flow. Do note that you have to specify block-specific inputs file in the directory mentioned by Makefile.\n"
   },
   "BUFFER_PORTS_ARGS": {
-    "description": "Specify arguments to the buffer_ports call during placement. Only used if DONT_BUFFER_PORTS=0.\n",
+    "description": "Edits to the arguments the flow passes to `buffer_ports`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
     "stages": [
       "place"
     ]
@@ -87,7 +107,9 @@
     ]
   },
   "CAP_MARGIN": {
+    "deprecated": 1,
     "description": "Specifies a capacitance margin when fixing max capacitance violations. This option allows you to overfix.\n",
+    "replacement": "REPAIR_DESIGN_ARGS = -cap_margin {value}",
     "tunable": 1
   },
   "CDL_FILE": {
@@ -103,6 +125,7 @@
     "default": 0,
     "description": "Cell padding on both sides in site widths to ease routability in detail placement.\n",
     "stages": [
+      "floorplan",
       "place",
       "cts",
       "grt"
@@ -126,16 +149,26 @@
       "synth"
     ]
   },
+  "CLOCK_TREE_SYNTHESIS_ARGS": {
+    "description": "Edits to the arguments the flow passes to `clock_tree_synthesis`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
+    "stages": [
+      "cts"
+    ]
+  },
   "CLUSTER_FLOPS": {
     "default": 0,
+    "deprecated": 1,
     "description": "Enable clustering of flip-flops into multi-bit flip-flops, if the platform PDK includes multi-bit flip-flops\n",
+    "replacement": {
+      "1": "CLUSTER_FLOPS_ARGS = on"
+    },
     "stages": [
       "place"
     ]
   },
   "CLUSTER_FLOPS_ARGS": {
     "default": "",
-    "description": "Additional arguments passed to the cluster_flops command. Only used when CLUSTER_FLOPS is set.\n",
+    "description": "Edits to the arguments the flow passes to `cluster_flops`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
     "stages": [
       "place"
     ]
@@ -183,13 +216,17 @@
     ]
   },
   "CTS_ARGS": {
+    "deprecated": 1,
     "description": "Override `clock_tree_synthesis` arguments.\n",
+    "replacement": "CLOCK_TREE_SYNTHESIS_ARGS, with only what differs from the flow's arguments",
     "stages": [
       "cts"
     ]
   },
   "CTS_BUF_DISTANCE": {
+    "deprecated": 1,
     "description": "Distance (in microns) between buffers.\n",
+    "replacement": "CLOCK_TREE_SYNTHESIS_ARGS = -distance_between_buffers {value}",
     "stages": [
       "cts"
     ],
@@ -197,13 +234,17 @@
     "type": "float"
   },
   "CTS_BUF_LIST": {
+    "deprecated": 1,
     "description": "List of cells used to construct the clock tree. Overrides buffer inference.\n",
+    "replacement": "CLOCK_TREE_SYNTHESIS_ARGS = -buf_list {value}",
     "stages": [
       "cts"
     ]
   },
   "CTS_CLUSTER_DIAMETER": {
+    "deprecated": 1,
     "description": "Maximum diameter (in microns) of sink cluster.\n",
+    "replacement": "CLOCK_TREE_SYNTHESIS_ARGS = -sink_clustering_max_diameter {value}",
     "stages": [
       "cts"
     ],
@@ -211,7 +252,9 @@
     "type": "float"
   },
   "CTS_CLUSTER_SIZE": {
+    "deprecated": 1,
     "description": "Maximum number of sinks per cluster.\n",
+    "replacement": "CLOCK_TREE_SYNTHESIS_ARGS = -sink_clustering_size {value}",
     "stages": [
       "cts"
     ],
@@ -219,13 +262,9 @@
     "type": "int"
   },
   "CTS_LIB_NAME": {
+    "deprecated": 1,
     "description": "Name of the Liberty library to use in selecting the clock buffers.\n",
-    "stages": [
-      "cts"
-    ]
-  },
-  "CTS_SNAPSHOT": {
-    "description": "Creates ODB/SDC files prior to clock net and setup/hold repair.\n",
+    "replacement": "CLOCK_TREE_SYNTHESIS_ARGS = -library {value}",
     "stages": [
       "cts"
     ]
@@ -246,29 +285,47 @@
   },
   "DETAILED_METRICS": {
     "default": 0,
+    "deprecated": 1,
     "description": "If set, then calls report_metrics prior to repair operations in the CTS and global route stages\n",
+    "replacement": {
+      "1": "REPORT_METRICS_ARGS = cts:on grt:on"
+    },
     "stages": [
       "cts",
       "grt"
     ]
   },
+  "DETAILED_PLACEMENT_ARGS": {
+    "description": "Edits to the arguments the flow passes to `detailed_placement`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
+    "stages": [
+      "place",
+      "cts",
+      "grt"
+    ]
+  },
   "DETAILED_ROUTE_ARGS": {
-    "description": "Add additional arguments for debugging purposes during detail route.\n",
+    "description": "Edits to the arguments the flow passes to `detailed_route`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`. Until it is removed, a value that is a plain command line, with no `~`, `on`, `off` or scope, replaces the flow's arguments, as it always has.\n",
     "stages": [
       "route"
     ]
   },
   "DETAILED_ROUTE_END_ITERATION": {
     "default": 64,
+    "deprecated": 1,
     "description": "Maximum number of iterations.\n",
+    "replacement": "DETAILED_ROUTE_ARGS = -droute_end_iter {value}",
     "stages": [
       "route"
     ]
   },
   "DETAIL_PLACEMENT_ARGS": {
-    "description": "Specify arguments to the detailed_placement call during placement.\n",
+    "deprecated": 1,
+    "description": "Specify arguments to every detailed_placement call: the one in placement and the re-legalizations after clock tree synthesis, after repair in CTS and after the repairs in global route. A legalizer chosen here (-use_diamond_legalizer, -max_displacement) is therefore the one every stage uses.\n",
+    "replacement": "DETAILED_PLACEMENT_ARGS = {value}",
     "stages": [
-      "place"
+      "place",
+      "cts",
+      "grt"
     ]
   },
   "DFF_LIB_FILE": {
@@ -291,14 +348,22 @@
     "tunable": 1
   },
   "DISABLE_VIA_GEN": {
+    "deprecated": 1,
     "description": "Passed as -disable_via_gen to detailed_route.\n",
+    "replacement": {
+      "1": "DETAILED_ROUTE_ARGS = -disable_via_gen"
+    },
     "stages": [
       "route"
     ]
   },
   "DONT_BUFFER_PORTS": {
     "default": 0,
+    "deprecated": 1,
     "description": "Do not buffer input/output ports during floorplanning.\n",
+    "replacement": {
+      "1": "BUFFER_PORTS_ARGS = off"
+    },
     "stages": [
       "place"
     ]
@@ -308,7 +373,12 @@
   },
   "DPO_MAX_DISPLACEMENT": {
     "default": "5 1",
-    "description": "Specifies how far an instance can be moved when optimizing.\n"
+    "deprecated": 1,
+    "description": "Specifies how far an instance can be moved when optimizing.\n",
+    "replacement": "IMPROVE_PLACEMENT_ARGS = -max_displacement {value}",
+    "stages": [
+      "place"
+    ]
   },
   "EARLY_SIZING_CAP_RATIO": {
     "description": "Ratio between the input pin capacitance and the output pin load during initial gate sizing.\n",
@@ -318,17 +388,32 @@
   },
   "ENABLE_DPO": {
     "default": 1,
-    "description": "Enable detail placement with improve_placement feature.\n"
+    "deprecated": 1,
+    "description": "Enable detail placement with improve_placement feature.\n",
+    "replacement": {
+      "0": "IMPROVE_PLACEMENT_ARGS = off"
+    },
+    "stages": [
+      "place"
+    ]
   },
   "ENABLE_PLACE_REPAIR_TIMING": {
     "default": 0,
+    "deprecated": 1,
     "description": "Run repair_timing during the placement resize stage using placement parasitics. Disabled by default; pre-CTS setup/hold repair is skipped unless this is set to 1.\n",
+    "replacement": {
+      "1": "REPAIR_TIMING_ARGS = place:on"
+    },
     "stages": [
       "place"
     ]
   },
   "ENABLE_RESISTANCE_AWARE": {
+    "deprecated": 1,
     "description": "Passed as -resistance_aware to global_route.\n",
+    "replacement": {
+      "1": "GLOBAL_ROUTE_ARGS = -resistance_aware"
+    },
     "stages": [
       "grt"
     ]
@@ -382,14 +467,14 @@
     "description": "For instance Bazel needs artifacts (.odb and .rpt files) on a failure to allow the user to save hours on re-running the failed step locally, but when working with a Makefile flow, it is more natural to fail the step and leave the user to manually inspect the logs and artifacts directly via the file system. Set to 1 to change the behavior to generate artifacts upon failure to e.g. do a global route. The exit code will still be non-zero on all other failures that aren't covered by the \"useful to inspect the artifacts on failure\" use-case. Example: just like detailed routing, a global route that fails with congestion, is not a build failure(as in exit code non-zero), it is a successful(as in zero exit code) global route that produce reports detailing the problem. Detailed route will not proceed, if there is global routing congestion This allows build systems, such as bazel, to create artifacts for global and detailed route, even if the operation had problems, without having know about the semantics between global and detailed route. Considering that global and detailed route can run for a long time and use a lot of memory, this allows inspecting results on a laptop for a build that ran on a server.\n"
   },
   "GLOBAL_PLACEMENT_ARGS": {
-    "description": "Use additional tuning parameters during global placement other than default args defined in global_place.tcl.\n",
+    "description": "Edits to the arguments the flow passes to `global_placement`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
     "stages": [
       "place"
     ]
   },
   "GLOBAL_ROUTE_ARGS": {
     "default": "-congestion_report_iter_step 5 -verbose",
-    "description": "Replaces default arguments for global route. The -congestion_iterations default is set by the flow (30 for FastRoute, 10 for CUGR); add -congestion_iterations here to override it.\n",
+    "description": "Edits to the arguments the flow passes to `global_route`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`. Edits the first global_route; the incremental ones after repair take -allow_congestion from it.\n",
     "stages": [
       "grt"
     ]
@@ -413,15 +498,28 @@
       "place"
     ]
   },
+  "GPL_PLACE_IOS": {
+    "default": 0,
+    "description": "Place IO pins together with the cells in global placement (-place_ios).\n",
+    "stages": [
+      "place"
+    ]
+  },
   "GPL_RANDOM_SEED": {
+    "deprecated": 1,
     "description": "Specifies a random seed for global placement.  Useful for perturbation studies.\n",
+    "replacement": "GLOBAL_PLACEMENT_ARGS = -random_seed {value}",
     "stages": [
       "place"
     ]
   },
   "GPL_ROUTABILITY_DRIVEN": {
     "default": 1,
+    "deprecated": 1,
     "description": "Specifies whether the placer should use routability driven placement.\n",
+    "replacement": {
+      "0": "GLOBAL_PLACEMENT_ARGS = ~-routability_driven"
+    },
     "stages": [
       "place"
     ]
@@ -447,11 +545,26 @@
   },
   "HOLD_SLACK_MARGIN": {
     "default": 0,
+    "deprecated": 1,
     "description": "Specifies a time margin for the slack when fixing hold violations. This option allows you to overfix or underfix (negative value, terminate retiming before 0 or positive slack). floorplan.tcl uses min of HOLD_SLACK_MARGIN and 0 (default hold slack margin). This avoids overrepair in floorplan for hold by default, but allows skipping hold repair using a negative HOLD_SLACK_MARGIN. Exiting timing repair early is useful in exploration where the .sdc has a fixed clock period at the design's target clock period and where HOLD/SETUP_SLACK_MARGIN is used to avoid overrepair (extremely long running times) when exploring different parameter settings. When an ideal clock is used, that is before CTS, a clock insertion delay of 0 is used in timing paths. This creates a mismatch between macros that have a .lib file from after CTS, when the clock is propagated. To mitigate this, OpenSTA will use subtract the clock insertion delay of macros when calculating timing with ideal clock. Provided that min_clock_tree_path and max_clock_tree_path are in the .lib file, which is the case for macros built with OpenROAD. This is less accurate than if OpenROAD had created a placeholder clock tree for timing estimation purposes prior to CTS. There will inevitably be inaccuracies in the timing calculation prior to CTS. Use a slack margin that is low enough, even negative, to avoid overrepair. Inaccuracies in the timing prior to CTS can also lead to underrepair, but there no obvious and simple way to avoid underrapir in these cases. Overrepair can lead to excessive runtimes in repair or too much buffering being added, which can present itself as congestion of hold cells or buffer cells. Another use of SETUP/HOLD_SLACK_MARGIN is design parameter exploration when trying to find the minimum clock period for a design. The SDC_FILE for a design can be quite complicated and instead of modifying the clock period in the SDC_FILE, which can be non-trivial, the clock period can be fixed at the target frequency and the SETUP/HOLD_SLACK_MARGIN can be swept to find a plausible current minimum clock period.\n",
+    "replacement": "REPAIR_TIMING_ARGS = -hold_margin {value}",
     "stages": [
       "cts",
       "floorplan",
       "grt"
+    ]
+  },
+  "IMPROVE_PLACEMENT_ARGS": {
+    "description": "Edits to the arguments the flow passes to `improve_placement`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
+    "stages": [
+      "place"
+    ]
+  },
+  "INFER_CLKGATES": {
+    "default": 0,
+    "description": "Enables Yosys clock gate inference. By default, it uses the Liberty cell definitions to determine clock gating cell. The selection can be overridden using the POS_CLKGATE_AND_PORTS and/or NEG_CLKGATE_AND_PORTS variables.\n",
+    "stages": [
+      "synth"
     ]
   },
   "IO_CONSTRAINTS": {
@@ -496,16 +609,20 @@
     "type": "string"
   },
   "LEC_AUX_VERILOG_FILES": {
-    "description": "Additional Verilog files (e.g. blackbox stubs) to include in LEC equivalence checks. Appended to the generated Verilog netlist before running the formal equivalence check.\n",
+    "description": "Additional Verilog files (e.g. blackbox stubs) to include in generated netlists for formal equivalence checks.\n",
     "stages": [
-      "cts"
+      "synth",
+      "cts",
+      "final"
     ]
   },
   "LEC_CHECK": {
-    "default": 0,
-    "description": "Perform a formal equivalence check between before and after netlists. If this fails, report an issue to OpenROAD.\n",
+    "default": "$(if $(wildcard $(KEPLER_FORMAL_EXE)),1,0)",
+    "description": "Perform formal equivalence checks between before and after netlists. This checks CTS repair timing and the initial synthesis netlist against the final netlist. If this fails, report an issue to OpenROAD.\n",
     "stages": [
-      "cts"
+      "synth",
+      "cts",
+      "final"
     ]
   },
   "LIB_FILES": {
@@ -515,23 +632,8 @@
     "default": "NLDM",
     "description": "Selects between NLDM and CCS timing models for the ASAP7 platform. Valid values: NLDM (default), CCS. Used in flow/platforms/asap7/config.mk to pick the LIB_DIR subdirectory and accumulate the corresponding $(CORNER)_$(LIB_MODEL)_LIB_FILES list, and in flow/scripts/load.tcl to gate CCS-specific Tcl branches.\n"
   },
-  "MACRO_BLOCKAGE_HALO": {
-    "description": "Distance beyond the edges of a macro that will also be covered by the blockage generated for that macro. Note that the default macro blockage halo comes from the largest of the specified MACRO_PLACE_HALO x or y values. This variable overrides that calculation.\n",
-    "stages": [
-      "floorplan"
-    ]
-  },
-  "MACRO_EXTENSION": {
-    "description": "Sets the number of GCells added to the blockages boundaries from macros.\n"
-  },
   "MACRO_PLACEMENT_TCL": {
-    "description": "Specifies the path of a TCL file on how to place macros manually.\nThe user may choose to place just some of the macros in the design.\nThe macro placer will handle the remaining unplaced macros.\n",
-    "stages": [
-      "floorplan"
-    ]
-  },
-  "MACRO_PLACE_HALO": {
-    "description": "Horizontal/vertical halo around macros (microns). Used by automatic macro placement.\n",
+    "description": "Specifies the path of a TCL file on how to place macros manually.\nThe user may choose to place just some of the macros in the design.\nThe macro placer will handle the remaining unplaced macros. Note\nthat using the macro placement file generated by the macro placer\nwill not result in the same global placement as actually running\nthe macro placer: the macro placement file does not contain the\nlocations that the macro placer generates for the standard cells,\nand those locations impact global placement.\n",
     "stages": [
       "floorplan"
     ]
@@ -588,7 +690,9 @@
   },
   "MAX_REPAIR_ANTENNAS_ITER_GRT": {
     "default": 5,
+    "deprecated": 1,
     "description": "Defines the maximum number of iterations post global routing repair antennas will run.\n",
+    "replacement": "REPAIR_ANTENNAS_ARGS = grt:-iterations {value}",
     "stages": [
       "grt"
     ]
@@ -631,6 +735,12 @@
       "final"
     ]
   },
+  "NEG_CLKGATE_AND_PORTS": {
+    "description": "Specifies the active low enable clock gating cell and port names when used in conjunction with the INFER_CLKGATES variable. Format is \"cell_name enable_port:master_clock:gated_clock\"\n",
+    "stages": [
+      "synth"
+    ]
+  },
   "NUM_CORES": {
     "description": "Passed to `openroad -threads $(NUM_CORES)`, defaults to numbers of cores in system as determined by system specific code in Makefile, `nproc` is tried first. OpenROAD does not limit itself to this number of cores across OpenROAD running instances, which can lead to overprovisioning in contexts such as bazel-orfs where there could be many routing, or place jobs running at the same time.\n",
     "stages": [
@@ -642,7 +752,8 @@
     "description": "Feature toggle to enable to run OpenROAD in hierarchical mode, otherwise considered flat. Will eventually be the default and this option will be retired.\n",
     "stages": [
       "All stages"
-    ]
+    ],
+    "tunable": 1
   },
   "OPT_POST_GRT_WNS": {
     "default": 1,
@@ -652,13 +763,17 @@
     ]
   },
   "OR_K": {
+    "deprecated": 1,
     "description": "Passed as -or_k to detailed routing.\n",
+    "replacement": "DETAILED_ROUTE_ARGS = -or_k {value}",
     "stages": [
       "route"
     ]
   },
   "OR_SEED": {
+    "deprecated": 1,
     "description": "Passed as -or_seed to detailed routing.\n",
+    "replacement": "DETAILED_ROUTE_ARGS = -or_seed {value}",
     "stages": [
       "route"
     ]
@@ -686,7 +801,7 @@
     "type": "float"
   },
   "PLACE_PINS_ARGS": {
-    "description": "Arguments to place_pins\n",
+    "description": "Edits to the arguments the flow passes to `place_pins`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
     "stages": [
       "place"
     ]
@@ -702,6 +817,12 @@
   "PLATFORM": {
     "description": "Specifies process design kit or technology node to be used.\n",
     "required": true
+  },
+  "PLATFORM_ARGS": {
+    "description": "A platform's defaults for command arguments, in the grammar of docs/user/CommandArguments.md, each edit starting with the command it is for, as in `rtl_macro_placer:-halo_width 5`. They rank above the flow's own arguments and below a design's <COMMAND>_ARGS.\n",
+    "stages": [
+      "All stages"
+    ]
   },
   "PLATFORM_TCL": {
     "description": "Specifies a Tcl script with commands to run before loading design.\n"
@@ -801,6 +922,16 @@
     "stages": [
       "floorplan"
     ]
+  },
+  "POS_CLKGATE_AND_PORTS": {
+    "description": "Specifies the active high enable clock gating cell and port names when used in conjunction with the INFER_CLKGATES variable. Format is \"cell_name enable_port:master_clock:gated_clock\"\n",
+    "stages": [
+      "synth"
+    ]
+  },
+  "POWER_FILE_SCOPE": {
+    "description": "The SAIF or VCD scope of the current design. Typically the test bench name and design under the test instance name. Scope levels are separated with '/'.\n",
+    "type": "string"
   },
   "PRE_CTS_TCL": {
     "description": "Specifies a Tcl script with commands to run before CTS.\n",
@@ -914,25 +1045,73 @@
     "default": 0,
     "description": "Specifies how many percent of paths with positive slacks can be slowed for power savings [0-100].\n"
   },
-  "REMOVE_ABC_BUFFERS": {
-    "default": 0,
-    "deprecated": 1,
-    "description": "Remove abc buffers from the netlist. If timing repair in floorplanning is taking too long, use a SETUP/HOLD_SLACK_MARGIN to terminate timing repair early instead of using REMOVE_ABC_BUFFERS or set SKIP_LAST_GASP=1.\n",
-    "stages": [
-      "floorplan"
-    ]
-  },
   "REMOVE_CELLS_FOR_LEC": {
     "description": "String patterns directly passed to write_verilog -remove_cells <> for lec checks.\n",
     "type": "string"
   },
+  "REPAIR_ANTENNAS_ARGS": {
+    "description": "Edits to the arguments the flow passes to `repair_antennas`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
+    "stages": [
+      "grt",
+      "route"
+    ]
+  },
+  "REPAIR_DESIGN_ARGS": {
+    "description": "Edits to the arguments the flow passes to `repair_design`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
+    "stages": [
+      "place",
+      "grt"
+    ]
+  },
   "REPAIR_PDN_VIA_LAYER": {
-    "description": "Remove power grid vias which generate DRC violations after detailed routing.\n"
+    "deprecated": 1,
+    "description": "Remove power grid vias which generate DRC violations after detailed routing.\n",
+    "replacement": "DETAILED_ROUTE_ARGS = -repair_pdn_vias {value}"
+  },
+  "REPAIR_TIE_FANOUT_ARGS": {
+    "description": "Edits to the arguments the flow passes to `repair_tie_fanout`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
+    "stages": [
+      "floorplan"
+    ]
+  },
+  "REPAIR_TIMING_ARGS": {
+    "description": "Edits to the arguments the flow passes to `repair_timing`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
+    "stages": [
+      "floorplan",
+      "place",
+      "cts",
+      "grt"
+    ]
   },
   "REPORT_CLOCK_SKEW": {
     "default": 1,
     "description": "Report clock skew as part of reporting metrics, starting at CTS, before which there is no clock skew. This metric can be quite time-consuming, so it can be useful to disable.\n",
     "stages": [
+      "cts",
+      "grt",
+      "route",
+      "final"
+    ]
+  },
+  "REPORT_ENDPOINT_SLACK": {
+    "default": 0,
+    "description": "If set to 1, write the setup and hold slack of every timing endpoint at the end of every flow step (e.g. 3_3_place_gp) to $REPORTS_DIR/<step>_endpoint_slack.json. These snapshots can be compared across steps with flow/util/endpointSlack.py. See docs/contrib/EndpointSlackTracking.md.\n",
+    "stages": [
+      "synth",
+      "floorplan",
+      "place",
+      "cts",
+      "grt",
+      "route",
+      "final"
+    ]
+  },
+  "REPORT_METRICS_ARGS": {
+    "description": "Edits to the arguments the flow passes to `report_metrics`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
+    "stages": [
+      "synth",
+      "floorplan",
+      "place",
       "cts",
       "grt",
       "route",
@@ -952,121 +1131,185 @@
   },
   "RTLMP_AREA_WT": {
     "default": 0.1,
+    "deprecated": 1,
     "description": "Weight for the area of the current floorplan.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -area_weight {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_ARGS": {
+    "deprecated": 1,
     "description": "Overrides all other RTL macro placer arguments.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS, with only what differs from the flow's arguments",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_BOUNDARY_WT": {
     "default": 50.0,
+    "deprecated": 1,
     "description": "Weight for the boundary or how far the hard macro clusters are from boundaries.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -boundary_weight {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_FENCE_LX": {
     "default": 0.0,
+    "deprecated": 1,
     "description": "Defines the lower left X coordinate for the global fence bounding box in microns.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -fence_lx {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_FENCE_LY": {
     "default": 0.0,
+    "deprecated": 1,
     "description": "Defines the lower left Y coordinate for the global fence bounding box in microns.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -fence_ly {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_FENCE_UX": {
     "default": 0.0,
+    "deprecated": 1,
     "description": "Defines the upper right X coordinate for the global fence bounding box in microns.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -fence_ux {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_FENCE_UY": {
     "default": 0.0,
+    "deprecated": 1,
     "description": "Defines the upper right Y coordinate for the global fence bounding box in microns.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -fence_uy {value}",
+    "stages": [
+      "floorplan"
+    ]
+  },
+  "RTLMP_KEEP_CLUSTERING": {
+    "default": 0,
+    "deprecated": 1,
+    "description": "Set to 1 to store the RTL macro placer's clustering hierarchy in the ODB as nested dbGroups.\n",
+    "replacement": {
+      "1": "RTL_MACRO_PLACER_ARGS = -keep_clustering_data"
+    },
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_MAX_INST": {
+    "deprecated": 1,
     "description": "Maximum number of standard cells in a cluster. If unset, rtl_macro_placer will calculate a value based on the design attributes.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -max_num_inst {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_MAX_LEVEL": {
     "default": 2,
+    "deprecated": 1,
     "description": "Maximum depth of the physical hierarchy tree.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -max_num_level {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_MAX_MACRO": {
+    "deprecated": 1,
     "description": "Maximum number of macros in a cluster. If unset, rtl_macro_placer will calculate a value based on the design attributes.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -max_num_macro {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_MIN_AR": {
     "default": 0.33,
+    "deprecated": 1,
     "description": "Specifies the minimum aspect ratio (height/width).\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -min_ar {value}",
+    "stages": [
+      "floorplan"
+    ]
+  },
+  "RTLMP_MIN_CHANNEL_SIZE": {
+    "deprecated": 1,
+    "description": "Minimum channel width and height between macros (microns), given as one value for both, or two values \"width height\".\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -min_channel_size {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_MIN_INST": {
+    "deprecated": 1,
     "description": "Minimum number of standard cells in a cluster. If unset, rtl_macro_placer will calculate a value based on the design attributes.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -min_num_inst {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_MIN_MACRO": {
+    "deprecated": 1,
     "description": "Minimum number of macros in a cluster. If unset, rtl_macro_placer will calculate a value based on the design attributes.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -min_num_macro {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_NOTCH_WT": {
     "default": 50.0,
+    "deprecated": 1,
     "description": "Weight for the notch, or the existence of dead space that cannot be used for placement and routing.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -notch_weight {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_OUTLINE_WT": {
     "default": 100.0,
+    "deprecated": 1,
     "description": "Weight for violating the fixed outline constraint, meaning that all clusters should be placed within the shape of their parent cluster.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -outline_weight {value}",
+    "stages": [
+      "floorplan"
+    ]
+  },
+  "RTLMP_PIN_AWARE_CHANNELS": {
+    "default": 1,
+    "deprecated": 1,
+    "description": "Set to 1 to trim macro channels based on the pin locations of macros, instead of using full channels. Requires RTLMP_MIN_CHANNEL_SIZE to also be set. Defaults to 1 whenever RTLMP_MIN_CHANNEL_SIZE is set and this variable is not explicitly set to 0.\n",
+    "replacement": {
+      "0": "RTL_MACRO_PLACER_ARGS = ~-pin_aware_channels"
+    },
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_RPT_DIR": {
+    "deprecated": 1,
     "description": "Path to the directory where reports are saved.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -report_directory {value}",
     "stages": [
       "floorplan"
     ]
   },
   "RTLMP_WIRELENGTH_WT": {
     "default": 100.0,
+    "deprecated": 1,
     "description": "Weight for half-perimiter wirelength.\n",
+    "replacement": "RTL_MACRO_PLACER_ARGS = -wirelength_weight {value}",
     "stages": [
       "floorplan"
     ]
   },
-  "RULES_JSON": {
-    "description": "json files with the metrics baseline regression rules. In the ORFS Makefile, this defaults to $DESIGN_DIR/rules-base.json, but ORFS does not mandate the users source directory layout and this can be placed elsewhere when the user sets up an ORFS config.mk or from bazel-orfs.\n",
+  "RTL_MACRO_PLACER_ARGS": {
+    "description": "Edits to the arguments the flow passes to `rtl_macro_placer`, in the grammar of docs/user/CommandArguments.md: `-option value`, `-flag`, `~-option`, `on`/`off`, each optionally scoped `stage:` or `stage.call:`.\n",
     "stages": [
-      "test"
+      "floorplan"
     ]
   },
   "RUN_LOG_NAME_STEM": {
@@ -1075,6 +1318,10 @@
   },
   "RUN_SCRIPT": {
     "description": "Path to script to run from `make run`, python or tcl script detected by .py or .tcl extension.\n"
+  },
+  "SAIF_FILE": {
+    "description": "Specifies the Switching Activity Interchange Format (SAIF) file containing pin activities and duty cycles for use in power calculation.\n",
+    "type": "string"
   },
   "SC_LEF": {
     "description": "Path to technology standard cell LEF file.\n"
@@ -1086,26 +1333,43 @@
       "synth"
     ]
   },
-  "SDC_GUT": {
-    "description": "Load design and remove all internal logic before doing synthesis. This is useful when creating a mock .lef abstract that has a smaller area than the amount of logic would allow. bazel-orfs uses this to mock SRAMs, for instance.\n",
-    "stages": [
-      "synth"
-    ]
-  },
   "SEAL_GDS": {
     "description": "Seal macro to place around the design.\n"
   },
+  "SEC_CHECK": {
+    "default": 0,
+    "description": "Perform a sequential equivalence check between the initial synthesis netlist and final netlist with the Kepler Formal PDR engine. If this fails, report an issue to OpenROAD.\n",
+    "stages": [
+      "synth",
+      "final"
+    ]
+  },
   "SETUP_MOVE_SEQUENCE": {
+    "deprecated": 1,
     "description": "Passed as -sequence to repair_timing. This should be a string of move keywords separated by commas.\n",
+    "replacement": "REPAIR_TIMING_ARGS = -sequence {value}",
     "stages": [
       "cts",
       "floorplan",
       "grt"
     ]
   },
+  "SETUP_REPAIR_PHASES": {
+    "deprecated": 1,
+    "description": "Passed as -phases to repair_timing. This should be a string of setup repair phase names separated by spaces. Set to PARALLEL_EVAL to repair setup timing with the experimental parallel evaluation policy. When unset, repair_timing runs its default phases.\n",
+    "replacement": "REPAIR_TIMING_ARGS = -phases {value}",
+    "stages": [
+      "cts",
+      "floorplan",
+      "grt",
+      "place"
+    ]
+  },
   "SETUP_SLACK_MARGIN": {
     "default": 0,
+    "deprecated": 1,
     "description": "Specifies a time margin for the slack when fixing setup violations.\nThis option allows you to overfix or underfix(negative value, terminate\nretiming before 0 or positive slack).\nSee HOLD_SLACK_MARGIN for more details.\n",
+    "replacement": "REPAIR_TIMING_ARGS = -setup_margin {value}",
     "stages": [
       "cts",
       "floorplan",
@@ -1113,32 +1377,34 @@
     ],
     "tunable": 1
   },
-  "SET_RC_TCL": {
-    "description": "Metal & Via RC definition file path.\n"
-  },
   "SKIP_ANTENNA_REPAIR": {
     "default": 0,
+    "deprecated": 1,
     "description": "Skips antenna repair entirely.\n",
+    "replacement": {
+      "1": "REPAIR_ANTENNAS_ARGS = grt:off"
+    },
     "stages": [
       "grt"
     ]
   },
   "SKIP_ANTENNA_REPAIR_POST_DRT": {
     "default": 0,
+    "deprecated": 1,
     "description": "Skips antenna repair post-detailed routing.\n",
+    "replacement": {
+      "1": "REPAIR_ANTENNAS_ARGS = route:off"
+    },
     "stages": [
       "route"
     ]
   },
-  "SKIP_ANTENNA_REPAIR_PRE_GRT": {
-    "default": 0,
-    "description": "Skips antenna repair pre-global routing.\n",
-    "stages": [
-      "grt"
-    ]
-  },
   "SKIP_BUFFER_REMOVAL": {
+    "deprecated": 1,
     "description": "Passed as -skip_buffer_removal to repair_timing. Do not remove buffers as a transform to fix timing violations (default: allow buffer removal).\n",
+    "replacement": {
+      "1": "REPAIR_TIMING_ARGS = -skip_buffer_removal"
+    },
     "stages": [
       "cts",
       "floorplan",
@@ -1146,7 +1412,11 @@
     ]
   },
   "SKIP_CRIT_VT_SWAP": {
+    "deprecated": 1,
     "description": "Do not perform VT swap on critical cells to improve QoR (default: do critical VT swap). This is an additional VT swap on critical cells that remain near the end of setup fixing. If SKIP_VT_SWAP is set to 1, this also disables critical cell VT swap.\n",
+    "replacement": {
+      "1": "REPAIR_TIMING_ARGS = -skip_crit_vt_swap"
+    },
     "stages": [
       "cts",
       "floorplan",
@@ -1155,7 +1425,11 @@
   },
   "SKIP_CTS_REPAIR_TIMING": {
     "default": 0,
+    "deprecated": 1,
     "description": "Skipping CTS repair, which can take a long time, can be useful in architectural exploration or when getting CI up and running.\n",
+    "replacement": {
+      "1": "REPAIR_TIMING_ARGS = cts:off"
+    },
     "stages": [
       "cts"
     ]
@@ -1168,8 +1442,23 @@
       "final"
     ]
   },
+  "SKIP_FLOORPLAN_REPAIR_TIMING": {
+    "default": 0,
+    "deprecated": 1,
+    "description": "Skipping floorplan repair which sometimes does too much optimization too early.\n",
+    "replacement": {
+      "1": "REPAIR_TIMING_ARGS = floorplan:off"
+    },
+    "stages": [
+      "floorplan"
+    ]
+  },
   "SKIP_GATE_CLONING": {
+    "deprecated": 1,
     "description": "Do not use gate cloning transform to fix timing violations (default: use gate cloning).\n",
+    "replacement": {
+      "1": "REPAIR_TIMING_ARGS = -skip_gate_cloning"
+    },
     "stages": [
       "cts",
       "floorplan",
@@ -1184,7 +1473,11 @@
     ]
   },
   "SKIP_LAST_GASP": {
+    "deprecated": 1,
     "description": "Do not use last gasp optimization to fix timing violations (default: use gate last gasp).\n",
+    "replacement": {
+      "1": "REPAIR_TIMING_ARGS = -skip_last_gasp"
+    },
     "stages": [
       "cts",
       "floorplan",
@@ -1192,7 +1485,11 @@
     ]
   },
   "SKIP_PIN_SWAP": {
+    "deprecated": 1,
     "description": "Do not use pin swapping as a transform to fix timing violations (default: use pin swapping).\n",
+    "replacement": {
+      "1": "REPAIR_TIMING_ARGS = -skip_pin_swap"
+    },
     "stages": [
       "cts",
       "floorplan",
@@ -1201,14 +1498,22 @@
   },
   "SKIP_REPAIR_TIE_FANOUT": {
     "default": 0,
+    "deprecated": 1,
     "description": "Skip repair_tie_fanout at floorplan step.\n",
+    "replacement": {
+      "1": "REPAIR_TIE_FANOUT_ARGS = off"
+    },
     "stages": [
       "floorplan"
     ]
   },
   "SKIP_REPORT_METRICS": {
     "default": 0,
+    "deprecated": 1,
     "description": "If set to 1, then metrics, report_metrics does nothing. Useful to speed up builds.\n",
+    "replacement": {
+      "1": "REPORT_METRICS_ARGS = off"
+    },
     "stages": [
       "synth",
       "floorplan",
@@ -1220,7 +1525,11 @@
     ]
   },
   "SKIP_VT_SWAP": {
+    "deprecated": 1,
     "description": "Do not perform VT swap to improve QoR (default: do VT swap).\n",
+    "replacement": {
+      "1": "REPAIR_TIMING_ARGS = -skip_vt_swap"
+    },
     "stages": [
       "cts",
       "floorplan",
@@ -1228,14 +1537,18 @@
     ]
   },
   "SLEW_MARGIN": {
+    "deprecated": 1,
     "description": "Specifies a slew margin when fixing max slew violations. This option allows you to overfix.\n",
+    "replacement": "REPAIR_DESIGN_ARGS = -slew_margin {value}",
     "tunable": 1
   },
   "SWAP_ARITH_OPERATORS": {
+    "default": 0,
     "description": "Improve timing QoR by swapping ALU and MULT arithmetic operators.\n",
     "stages": [
       "All stages"
-    ]
+    ],
+    "tunable": 1
   },
   "SYNTH_ARGS": {
     "description": "Optional synthesis variables for yosys.\n",
@@ -1272,14 +1585,16 @@
     "description": "Select an alternative language frontend to ingest the design. Available option is \"slang\". If the variable is empty, design is read with the Yosys read_verilog command.\n",
     "stages": [
       "synth"
-    ]
+    ],
+    "tunable": 1
   },
   "SYNTH_HIERARCHICAL": {
     "default": 0,
     "description": "Enable to Synthesis hierarchically, otherwise considered flat synthesis.\n",
     "stages": [
       "synth"
-    ]
+    ],
+    "tunable": 1
   },
   "SYNTH_HIER_SEPARATOR": {
     "default": ".",
@@ -1303,7 +1618,7 @@
     ]
   },
   "SYNTH_KEEP_MODULES": {
-    "description": "Mark modules to keep from getting removed in flattening.\n",
+    "description": "Mark modules to keep from getting removed in flattening.\nA name that matches no module of the design stops synthesis.\n",
     "stages": [
       "synth"
     ]
@@ -1342,6 +1657,7 @@
     ]
   },
   "SYNTH_OPT_HIER": {
+    "default": 0,
     "description": "Optimize constants across hierarchical boundaries.\n",
     "stages": [
       "synth"
@@ -1381,6 +1697,18 @@
       "synth"
     ]
   },
+  "SYNTH_VERILOG_SURGERY": {
+    "description": "RTL surgery as a step of the flow: a script that copies VERILOG_FILES and edits the copies before synthesis reads them, so vendored RTL stays byte-identical to upstream and the OpenROAD- and PDK-specific changes live in one script next to the design's config.mk. Typical surgery gives a memory or register file a module of its own that AUTO_MEMORIES can convert, maps a clock gate onto the platform's, rewrites a pragma for the frontend, or removes a simulation construct. A new upstream version is then a plain copy: the surgery reapplies, or stops where upstream moved. Best on generated or regular RTL (firtool, sv2v, netlists); a text edit cannot see the meaning of include files, macros, packages or `bind`. As the RTL is read (canonicalization, memory extraction, and the SYNTH_USE_SYN frontend), it runs with SYNTH_VERILOG_SURGERY_ARGS, then `--out-dir $(OBJECTS_DIR)/surgery --` and the VERILOG_FILES (by PYTHON_EXE when it ends in .py), and writes one copy per source under the same file name; synthesis reads the copies. Input file names must be unique. Diff a copy against its original to see exactly what the surgery changed. The script should fail when it does not recognise its input; a failing script, or a copy it did not write, stops synthesis.\n",
+    "stages": [
+      "synth"
+    ]
+  },
+  "SYNTH_VERILOG_SURGERY_ARGS": {
+    "description": "Arguments to SYNTH_VERILOG_SURGERY, before the ones the flow adds.\n",
+    "stages": [
+      "synth"
+    ]
+  },
   "SYNTH_WRAPPED_ADDERS": {
     "description": "Specify the adder modules that can be used for synthesis, separated by commas. The default adder module is determined by the first element of this variable.\n",
     "stages": [
@@ -1394,10 +1722,12 @@
     ]
   },
   "SYNTH_WRAPPED_OPERATORS": {
+    "default": 0,
     "description": "Synthesize multiple architectural options for each arithmetic operator in the design. These options are available for switching among in later stages of the flow.\n",
     "stages": [
       "All stages"
-    ]
+    ],
+    "tunable": 1
   },
   "TAPCELL_TCL": {
     "description": "Path to Endcap and Welltie cells file.\n",
@@ -1427,14 +1757,18 @@
   },
   "TIE_SEPARATION": {
     "default": 0,
+    "deprecated": 1,
     "description": "Distance separating tie high/low instances from the load.\n",
+    "replacement": "REPAIR_TIE_FANOUT_ARGS = -separation {value}",
     "stages": [
       "floorplan"
     ]
   },
   "TNS_END_PERCENT": {
     "default": 100,
+    "deprecated": 1,
     "description": "Default TNS_END_PERCENT value for post CTS timing repair. Try fixing all violating endpoints by default (reduce to 5% for runtime). Specifies how many percent of violating paths to fix [0-100]. Worst path will always be fixed.\n",
+    "replacement": "REPAIR_TIMING_ARGS = -repair_tns {value}",
     "stages": [
       "place",
       "cts",
@@ -1451,6 +1785,10 @@
   "USE_FILL": {
     "default": 0,
     "description": "Whether to perform metal density filling.\n"
+  },
+  "VCD_FILE": {
+    "description": "Specifies the Value Change Dump (VCD) file containing pin activities and duty cycles for use in power calculation.\n",
+    "type": "string"
   },
   "VERILOG_DEFINES": {
     "description": "Preprocessor defines passed to the language frontend. Example: `-D HPDCACHE_ASSERT_OFF`\n",
@@ -1490,6 +1828,10 @@
       "grt",
       "route"
     ]
+  },
+  "WIRE_LOAD_MODEL": {
+    "description": "Name of a Liberty wire_load group applied with set_wire_load_model\nwhenever open.tcl reads timing. OpenSTA applies a wire-load model only\nto nets without parasitics, so it gives wire delay to timing read\nbefore placement and leaves placed and routed timing unaffected. An\nunknown name is an error. Empty, the default, applies none. A platform\nwhose libraries define no wire_load group can supply one in a Liberty\nfile listed in ADDITIONAL_LIBS.\n",
+    "type": "string"
   },
   "WRITE_ODB_AND_SDC_EACH_STAGE": {
     "default": 1,
