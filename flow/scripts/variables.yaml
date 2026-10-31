@@ -1119,6 +1119,7 @@ DFF_LIB_FILE:
 SYNTH_KEEP_MODULES:
   description: |
     Mark modules to keep from getting removed in flattening.
+    A name that matches no module of the design stops synthesis.
   stages:
     - synth
 SYNTH_ARGS:
@@ -1746,3 +1747,18 @@ GRT_SEED:
     - grt
   tunable: 1
   type: int
+SAIF_FILE:
+  description: >
+    Specifies the Switching Activity Interchange Format (SAIF) file containing pin
+    activities and duty cycles for use in power calculation.
+  type: string
+POWER_FILE_SCOPE:
+  description: >
+    The SAIF or VCD scope of the current design. Typically the test bench name and
+    design under the test instance name. Scope levels are separated with '/'.
+  type: string
+VCD_FILE:
+  description: >
+    Specifies the Value Change Dump (VCD) file containing pin activities and duty
+    cycles for use in power calculation.
+  type: string
