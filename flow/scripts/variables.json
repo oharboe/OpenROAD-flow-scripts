@@ -18,6 +18,12 @@
       "synth"
     ]
   },
+  "ABC_SCRIPT": {
+    "description": "Replaces the ABC script synthesis runs, so that a design can vendor and\nchange it. Ignored when SYNTH_WRAPPED_OPERATORS or SWAP_ARITH_OPERATORS\nis set: abc_new then maps each arithmetic operator with its own script.\n",
+    "stages": [
+      "synth"
+    ]
+  },
   "ABSTRACT_SOURCE": {
     "description": "Which .odb file to use to create abstract\n",
     "stages": [
@@ -107,6 +113,7 @@
     "default": 0,
     "description": "Cell padding on both sides in site widths to ease routability in detail placement.\n",
     "stages": [
+      "floorplan",
       "place",
       "cts",
       "grt"
@@ -224,12 +231,6 @@
   },
   "CTS_LIB_NAME": {
     "description": "Name of the Liberty library to use in selecting the clock buffers.\n",
-    "stages": [
-      "cts"
-    ]
-  },
-  "CTS_SNAPSHOT": {
-    "description": "Creates ODB/SDC files prior to clock net and setup/hold repair.\n",
     "stages": [
       "cts"
     ]
@@ -421,6 +422,13 @@
   },
   "GPL_KEEP_OVERFLOW": {
     "description": "Passed as -keep_resize_below_overflow to global_placement. Only used when GPL_TIMING_DRIVEN is enabled.\n",
+    "stages": [
+      "place"
+    ]
+  },
+  "GPL_PLACE_IOS": {
+    "default": 0,
+    "description": "Place IO pins together with the cells in global placement (-place_ios).\n",
     "stages": [
       "place"
     ]
@@ -823,6 +831,10 @@
       "synth"
     ]
   },
+  "POWER_FILE_SCOPE": {
+    "description": "The SAIF or VCD scope of the current design. Typically the test bench name and design under the test instance name. Scope levels are separated with '/'.\n",
+    "type": "string"
+  },
   "PRE_CTS_TCL": {
     "description": "Specifies a Tcl script with commands to run before CTS.\n",
     "stages": [
@@ -935,14 +947,6 @@
     "default": 0,
     "description": "Specifies how many percent of paths with positive slacks can be slowed for power savings [0-100].\n"
   },
-  "REMOVE_ABC_BUFFERS": {
-    "default": 0,
-    "deprecated": 1,
-    "description": "Remove abc buffers from the netlist. If timing repair in floorplanning is taking too long, use a SETUP/HOLD_SLACK_MARGIN to terminate timing repair early instead of using REMOVE_ABC_BUFFERS or set SKIP_LAST_GASP=1. Some designs still need it to reach their QoR targets.\n",
-    "stages": [
-      "floorplan"
-    ]
-  },
   "REMOVE_CELLS_FOR_LEC": {
     "description": "String patterns directly passed to write_verilog -remove_cells <> for lec checks.\n",
     "type": "string"
@@ -954,6 +958,19 @@
     "default": 1,
     "description": "Report clock skew as part of reporting metrics, starting at CTS, before which there is no clock skew. This metric can be quite time-consuming, so it can be useful to disable.\n",
     "stages": [
+      "cts",
+      "grt",
+      "route",
+      "final"
+    ]
+  },
+  "REPORT_ENDPOINT_SLACK": {
+    "default": 0,
+    "description": "If set to 1, write the setup and hold slack of every timing endpoint at the end of every flow step (e.g. 3_3_place_gp) to $REPORTS_DIR/<step>_endpoint_slack.json. These snapshots can be compared across steps with flow/util/endpointSlack.py. See docs/contrib/EndpointSlackTracking.md.\n",
+    "stages": [
+      "synth",
+      "floorplan",
+      "place",
       "cts",
       "grt",
       "route",
@@ -1111,18 +1128,16 @@
   "RUN_SCRIPT": {
     "description": "Path to script to run from `make run`, python or tcl script detected by .py or .tcl extension.\n"
   },
+  "SAIF_FILE": {
+    "description": "Specifies the Switching Activity Interchange Format (SAIF) file containing pin activities and duty cycles for use in power calculation.\n",
+    "type": "string"
+  },
   "SC_LEF": {
     "description": "Path to technology standard cell LEF file.\n"
   },
   "SDC_FILE": {
     "description": "The path to design constraint (SDC) file.\n",
     "required": true,
-    "stages": [
-      "synth"
-    ]
-  },
-  "SDC_GUT": {
-    "description": "Load design and remove all internal logic before doing synthesis. This is useful when creating a mock .lef abstract that has a smaller area than the amount of logic would allow. bazel-orfs uses this to mock SRAMs, for instance.\n",
     "stages": [
       "synth"
     ]
@@ -1144,6 +1159,15 @@
       "cts",
       "floorplan",
       "grt"
+    ]
+  },
+  "SETUP_REPAIR_PHASES": {
+    "description": "Passed as -phases to repair_timing. This should be a string of setup repair phase names separated by spaces. Set to PARALLEL_EVAL to repair setup timing with the experimental parallel evaluation policy. When unset, repair_timing runs its default phases.\n",
+    "stages": [
+      "cts",
+      "floorplan",
+      "grt",
+      "place"
     ]
   },
   "SETUP_SLACK_MARGIN": {
@@ -1168,13 +1192,6 @@
     "description": "Skips antenna repair post-detailed routing.\n",
     "stages": [
       "route"
-    ]
-  },
-  "SKIP_ANTENNA_REPAIR_PRE_GRT": {
-    "default": 0,
-    "description": "Skips antenna repair pre-global routing.\n",
-    "stages": [
-      "grt"
     ]
   },
   "SKIP_BUFFER_REMOVAL": {
@@ -1206,6 +1223,13 @@
     "stages": [
       "route",
       "final"
+    ]
+  },
+  "SKIP_FLOORPLAN_REPAIR_TIMING": {
+    "default": 0,
+    "description": "Skipping floorplan repair which sometimes does too much optimization too early.\n",
+    "stages": [
+      "floorplan"
     ]
   },
   "SKIP_GATE_CLONING": {
@@ -1347,7 +1371,7 @@
     ]
   },
   "SYNTH_KEEP_MODULES": {
-    "description": "Mark modules to keep from getting removed in flattening.\n",
+    "description": "Mark modules to keep from getting removed in flattening.\nA name that matches no module of the design stops synthesis.\n",
     "stages": [
       "synth"
     ]
@@ -1426,6 +1450,18 @@
       "synth"
     ]
   },
+  "SYNTH_VERILOG_SURGERY": {
+    "description": "RTL surgery as a step of the flow: a script that copies VERILOG_FILES and edits the copies before synthesis reads them, so vendored RTL stays byte-identical to upstream and the OpenROAD- and PDK-specific changes live in one script next to the design's config.mk. Typical surgery gives a memory or register file a module of its own that AUTO_MEMORIES can convert, maps a clock gate onto the platform's, rewrites a pragma for the frontend, or removes a simulation construct. A new upstream version is then a plain copy: the surgery reapplies, or stops where upstream moved. Best on generated or regular RTL (firtool, sv2v, netlists); a text edit cannot see the meaning of include files, macros, packages or `bind`. As the RTL is read (canonicalization, memory extraction, and the SYNTH_USE_SYN frontend), it runs with SYNTH_VERILOG_SURGERY_ARGS, then `--out-dir $(OBJECTS_DIR)/surgery --` and the VERILOG_FILES (by PYTHON_EXE when it ends in .py), and writes one copy per source under the same file name; synthesis reads the copies. Input file names must be unique. Diff a copy against its original to see exactly what the surgery changed. The script should fail when it does not recognise its input; a failing script, or a copy it did not write, stops synthesis.\n",
+    "stages": [
+      "synth"
+    ]
+  },
+  "SYNTH_VERILOG_SURGERY_ARGS": {
+    "description": "Arguments to SYNTH_VERILOG_SURGERY, before the ones the flow adds.\n",
+    "stages": [
+      "synth"
+    ]
+  },
   "SYNTH_WRAPPED_ADDERS": {
     "description": "Specify the adder modules that can be used for synthesis, separated by commas. The default adder module is determined by the first element of this variable.\n",
     "stages": [
@@ -1499,6 +1535,10 @@
     "default": 0,
     "description": "Whether to perform metal density filling.\n"
   },
+  "VCD_FILE": {
+    "description": "Specifies the Value Change Dump (VCD) file containing pin activities and duty cycles for use in power calculation.\n",
+    "type": "string"
+  },
   "VERILOG_DEFINES": {
     "description": "Preprocessor defines passed to the language frontend. Example: `-D HPDCACHE_ASSERT_OFF`\n",
     "stages": [
@@ -1537,6 +1577,10 @@
       "grt",
       "route"
     ]
+  },
+  "WIRE_LOAD_MODEL": {
+    "description": "Name of a Liberty wire_load group applied with set_wire_load_model\nwhenever open.tcl reads timing. OpenSTA applies a wire-load model only\nto nets without parasitics, so it gives wire delay to timing read\nbefore placement and leaves placed and routed timing unaffected. An\nunknown name is an error. Empty, the default, applies none. A platform\nwhose libraries define no wire_load group can supply one in a Liberty\nfile listed in ADDITIONAL_LIBS.\n",
+    "type": "string"
   },
   "WRITE_ODB_AND_SDC_EACH_STAGE": {
     "default": 1,
