@@ -32,6 +32,7 @@ proc repair_timing_helper { args } {
   append_env_var additional_args SETUP_SLACK_MARGIN -setup_margin 1
   append_env_var additional_args HOLD_SLACK_MARGIN -hold_margin 1
   append_env_var additional_args SETUP_MOVE_SEQUENCE -sequence 1
+  append_env_var additional_args SETUP_REPAIR_PHASES -phases 1
   append_env_var additional_args TNS_END_PERCENT -repair_tns 1
   append_env_var additional_args SKIP_PIN_SWAP -skip_pin_swap 0
   append_env_var additional_args SKIP_GATE_CLONING -skip_gate_cloning 0
@@ -150,6 +151,43 @@ proc env_var_or_empty { env_var } {
     return $::env($env_var)
   }
   return ""
+}
+
+proc pins_fixed_in_floorplan { } {
+  return [expr {
+    [env_var_exists_and_non_empty FLOORPLAN_DEF] ||
+    [env_var_exists_and_non_empty FOOTPRINT] ||
+    [env_var_exists_and_non_empty FOOTPRINT_TCL]
+  }]
+}
+
+# set_place_config arguments for global_placement -place_ios, from the
+# place_pins settings.
+proc place_pins_args_to_place_config { } {
+  set config_args [list \
+    -io_pin_hor_layers $::env(IO_PLACER_H) \
+    -io_pin_ver_layers $::env(IO_PLACER_V)]
+  set pins_args [env_var_or_empty PLACE_PINS_ARGS]
+  for { set i 0 } { $i < [llength $pins_args] } { incr i } {
+    set arg [lindex $pins_args $i]
+    switch -- $arg {
+      -corner_avoidance -
+      -min_distance {
+        lappend config_args -io_pin_[string range $arg 1 end] \
+          [lindex $pins_args [incr i]]
+      }
+      -min_distance_in_tracks {
+        lappend config_args -io_pin_min_distance_in_tracks
+      }
+      default {
+        utl::warn FLW 25 "PLACE_PINS_ARGS $arg is not used with GPL_PLACE_IOS."
+        if { ![string match -* [lindex $pins_args [expr { $i + 1 }]]] } {
+          incr i
+        }
+      }
+    }
+  }
+  return $config_args
 }
 
 proc find_macros { } {
@@ -430,4 +468,40 @@ proc orfs_copy_db { input_file output_file } {
 proc source_step_tcl { hook_type step_name } {
   set env_var "${hook_type}_${step_name}_TCL"
   source_env_var_if_exists $env_var
+}
+
+# The Verilog files synthesis reads: VERILOG_FILES or, with
+# SYNTH_VERILOG_SURGERY, the copies its script writes. The script runs
+# here, as the RTL is read, into $(OBJECTS_DIR)/surgery: one copy per
+# source under the same file name, kept so a diff against the original
+# shows what the surgery changed. They are no make target and no build
+# output.
+proc synth_verilog_files { } {
+  if { ![env_var_exists_and_non_empty SYNTH_VERILOG_SURGERY] } {
+    return $::env(VERILOG_FILES)
+  }
+  set names [lmap f $::env(VERILOG_FILES) { file tail $f }]
+  if { [llength [lsort -unique $names]] != [llength $names] } {
+    error "SYNTH_VERILOG_SURGERY: VERILOG_FILES has two files of one name;\
+      the copies are named after the originals"
+  }
+  set dir [file join $::env(OBJECTS_DIR) surgery]
+  file delete -force $dir
+  file mkdir $dir
+  set cmd {}
+  if { [file extension [lindex $::env(SYNTH_VERILOG_SURGERY) 0]] eq ".py" } {
+    lappend cmd $::env(PYTHON_EXE)
+  }
+  lappend cmd {*}$::env(SYNTH_VERILOG_SURGERY) \
+    {*}[env_var_or_empty SYNTH_VERILOG_SURGERY_ARGS] \
+    --out-dir $dir -- {*}$::env(VERILOG_FILES)
+  puts "SYNTH_VERILOG_SURGERY: [join $cmd]"
+  exec {*}$cmd >@ stdout 2>@ stderr
+  set copies [lmap name $names { file join $dir $name }]
+  foreach copy $copies {
+    if { ![file exists $copy] } {
+      error "SYNTH_VERILOG_SURGERY wrote no $copy"
+    }
+  }
+  return $copies
 }
