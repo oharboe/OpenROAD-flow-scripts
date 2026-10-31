@@ -88,6 +88,9 @@ if { [env_var_exists_and_non_empty SYNTH_KEEP_MODULES] } {
     # `-module <name>` would error if the module doesn't exist, which
     # is why we use bare patterns instead.
     select "$module" "$module\\\$*"
+    if { [string trim [tee -q -s result.string select -list]] eq "" } {
+      error "SYNTH_KEEP_MODULES: no module $module in the design"
+    }
     setattr -mod -set keep_hierarchy 1
     select -clear
   }
@@ -143,6 +146,11 @@ if {
   synth -flatten -run coarse:fine {*}$synth_full_args
 }
 
+# Resolve internal tristates left by the slang frontend ---
+if { [env_var_equals SYNTH_HDL_FRONTEND slang] } {
+  tribuf -logic
+  opt_clean
+}
 
 if { $::env(SYNTH_MOCK_LARGE_MEMORIES) } {
   memory_collect
@@ -279,8 +287,13 @@ if {
 } {
   log_cmd abc {*}$abc_args
 } else {
+  # Not dead code: abc_new mistakes the "-script" in /OpenROAD-flow-scripts/...
+  # paths for a given -script and drops its default (YosysHQ/yosys#6320).
   scratchpad -set abc9.script $::env(SCRIPTS_DIR)/abc_speed_gia_only.script
-  # crop out -script from arguments
+  # abc_new maps each arithmetic operator module with the abc9_script
+  # attribute synth_wrap_operators.tcl sets on it, and every other module
+  # with the script above. An explicit -script overrides both, so it is
+  # cropped from the arguments and ABC_SCRIPT does not apply here.
   set abc_args [lrange $abc_args 2 end]
   log_cmd abc_new {*}$abc_args
   delete {t:$specify*}
@@ -320,6 +333,14 @@ if {
   # gets confused by, once Yosys#4931 is merged we can remove this branch and
   # always run `check -assert -mapped`
   check -assert
+}
+
+if { $::env(SYNTH_REPEATABLE_BUILD) } {
+  # techmap re-attaches src attributes that point into the techmap library,
+  # after synth_canonicalize.tcl stripped them; strip again so the netlist
+  # carries no build paths.
+  setattr -unset src *
+  setattr -mod -unset src *
 }
 
 # Write synthesized design
