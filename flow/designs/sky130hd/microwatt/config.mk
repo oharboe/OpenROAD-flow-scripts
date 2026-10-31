@@ -8,8 +8,7 @@ export VERILOG_FILES = $(sort $(wildcard $(DESIGN_HOME)/src/$(DESIGN_NICKNAME)/*
 
 export SDC_FILE      = $(DESIGN_HOME)/$(PLATFORM)/$(DESIGN_NICKNAME)/constraint.sdc
 
-export DIE_AREA   = 0 0 3020 3610
-export CORE_AREA  = 10 10 3010 3600
+export CORE_UTILIZATION = 55
 
 export ADDITIONAL_GDS  = $(wildcard $(DESIGN_DIR)/gds/*.gds.gz)
 
@@ -21,7 +20,7 @@ export SYNTH_HIERARCHICAL = 1
 
 export PLACE_DENSITY = 0.3
 
-export MACRO_PLACE_HALO = 60 60
+export RTLMP_MIN_CHANNEL_SIZE = 100 100
 
 # CTS tuning
 export CTS_BUF_DISTANCE = 600
