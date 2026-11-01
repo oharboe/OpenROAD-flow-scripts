@@ -156,12 +156,14 @@ def main():
     a = p.parse_args()
     rewrites = [[TECHNO, TECHNO_EXPECTED, TECHNO_REPLACEMENT, 0]]
     for path in a.files:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             text = f.read()
         for r in rewrites:
             text, n = rewrite(path, text, r[0], r[1], r[2])
             r[3] += n
-        with open(os.path.join(a.out_dir, os.path.basename(path)), "w") as f:
+        with open(
+            os.path.join(a.out_dir, os.path.basename(path)), "w", encoding="utf-8"
+        ) as f:
             f.write(text)
     for module, _, _, done in rewrites:
         if done != 1:
