@@ -6,9 +6,6 @@ except ImportError:
 import argparse
 import os
 import re
-import shlex
-import shutil
-import subprocess
 import sys
 
 
@@ -176,75 +173,28 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
-def klayout_command(environ):
-    """The KLayout executable as a command line, or None without one."""
-    cmd = environ.get("KLAYOUT_CMD") or shutil.which(
-        "klayout", path=environ.get("PATH", "")
-    )
-    return shlex.split(cmd) if cmd else None
-
-
 def main(argv, environ=os.environ):
-    """Write the stream file with the first KLayout found.
-
-    The klayout Python module from PyPI first, then a KLayout executable,
-    and without either an empty file and a warning.
-    """
+    """Write the stream file with the klayout Python module."""
     args = parse_args(argv)
-    if pya is not None:
-        print("[INFO] Merging with the klayout Python module")
-        return merge_gds(
-            pya_mod=pya,
-            tech_file=args.tech_file,
-            layer_map=args.layer_map,
-            in_def=args.in_def,
-            design_name=args.design_name,
-            in_files=args.in_files,
-            seal_file=args.seal_file,
-            out_file=args.out_file,
-            allow_empty=environ.get("GDS_ALLOW_EMPTY", ""),
-            allow_empty_cells=auto_memories_cells(environ),
+    if pya is None:
+        print(
+            "ERROR: the klayout Python module is not installed, pip install"
+            " klayout (etc/requirements-common_lock.txt)"
         )
-    klayout = klayout_command(environ)
-    if klayout is not None:
-        rd = {
-            "design_name": args.design_name,
-            "in_def": args.in_def,
-            "in_files": args.in_files,
-            "seal_file": args.seal_file,
-            "out_file": args.out_file,
-            "tech_file": args.tech_file,
-            "layer_map": args.layer_map,
-        }
-        cmd = klayout + ["-zz"]
-        for name, value in rd.items():
-            cmd += ["-rd", f"{name}={value}"]
-        cmd += ["-r", os.path.abspath(__file__)]
-        subprocess.run(klayout + ["-v"], env=environ, check=True)
-        return subprocess.run(cmd, env=environ).returncode
-    print(
-        "WARNING: klayout not found, mocking klayout by writing empty file "
-        + args.out_file
+        return 1
+    return merge_gds(
+        pya_mod=pya,
+        tech_file=args.tech_file,
+        layer_map=args.layer_map,
+        in_def=args.in_def,
+        design_name=args.design_name,
+        in_files=args.in_files,
+        seal_file=args.seal_file,
+        out_file=args.out_file,
+        allow_empty=environ.get("GDS_ALLOW_EMPTY", ""),
+        allow_empty_cells=auto_memories_cells(environ),
     )
-    open(args.out_file, "w").close()
-    return 0
 
 
-if pya is not None and "out_file" in globals():
-    # Run by a KLayout executable: klayout -zz -rd out_file=... -r def2stream.py
-    sys.exit(
-        merge_gds(
-            pya_mod=pya,
-            tech_file=tech_file,  # noqa: F821 - set by klayout -rd
-            layer_map=layer_map,  # noqa: F821
-            in_def=in_def,  # noqa: F821
-            design_name=design_name,  # noqa: F821
-            in_files=in_files,  # noqa: F821
-            seal_file=seal_file,  # noqa: F821
-            out_file=out_file,  # noqa: F821
-            allow_empty=os.environ.get("GDS_ALLOW_EMPTY", ""),
-            allow_empty_cells=auto_memories_cells(os.environ),
-        )
-    )
-elif __name__ == "__main__":
+if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

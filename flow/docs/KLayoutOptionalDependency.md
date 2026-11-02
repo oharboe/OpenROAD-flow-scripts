@@ -1,42 +1,37 @@
-# KLayout as an Optional Dependency
+# KLayout
 
-The flow writes its GDS/OAS stream with KLayout, and takes the first
-KLayout it finds:
-
-1. the `klayout` Python module, `pip install klayout`: a prebuilt wheel,
-   with no Qt and nothing to compile, for Linux (x86_64 and aarch64) and
-   macOS;
-2. a KLayout executable, `KLAYOUT_CMD` or `klayout` on `PATH`;
-3. neither: the stream file is written empty, with a warning, and the
-   flow runs to the end:
+The flow writes its GDS/OAS stream with the `klayout` Python module,
+`pip install klayout`: a prebuilt wheel, with no Qt and nothing to
+compile, for Linux (x86_64 and aarch64) and macOS. The installer
+installs it with the other Python packages
+(`etc/requirements-common_lock.txt`). `flow/util/def2stream.py`, run by
+`PYTHON_EXE`, writes the file; without the module it stops with an
+error and writes nothing:
 
 ```
-WARNING: klayout not found, mocking klayout by writing empty file ./results/asap7/gcd/base/6_1_merged.gds
+ERROR: the klayout Python module is not installed, pip install klayout (etc/requirements-common_lock.txt)
 ```
 
-`flow/util/def2stream.py` makes the choice, run by `PYTHON_EXE`. The
-module and the executable write the same layout. A GDS file written empty
-before KLayout was installed is up to date as far as make knows;
-`make clean_finish` removes it.
-
-DRC, LVS, the gallery and the viewers need a KLayout executable. The DRC
-and LVS rule decks are scripts in KLayout's Ruby-based DSL, which the
-Python module does not include. None of them runs in the default `make`.
+DRC, LVS, the gallery and the viewers need the KLayout application,
+which you install yourself: [KLayout](https://www.klayout.de/build.html).
+The DRC and LVS rule decks are scripts in KLayout's Ruby-based DSL,
+which the Python module does not include. None of them runs in the
+default `make`.
 
 ## Makefile Targets
 
 | Target | Requires KLayout | Description |
 |---|---|---|
-| `make finish` | No (Python module, or an empty GDS) | Complete flow including GDS generation |
-| `make gds` | No (Python module, or an empty GDS) | Generate GDS/OAS from finished design |
-| `make drc` | Yes, the executable | Run DRC checks (requires GDS) |
-| `make lvs` | Yes, the executable | Run LVS checks (requires GDS) |
-| `make gallery` | Yes | Generate layout screenshots |
-| `make klayout_<file>` | Yes | Open result in KLayout viewer |
+| `make finish` | The Python module | Complete flow including GDS generation |
+| `make gds` | The Python module | Generate GDS/OAS from finished design |
+| `make drc` | The application | Run DRC checks (requires GDS) |
+| `make lvs` | The application | Run LVS checks (requires GDS) |
+| `make gallery` | The application | Generate layout screenshots |
+| `make klayout_<file>` | The application | Open result in KLayout viewer |
 | `make generate_abstract` | No | Generate LEF/LIB abstracts |
 
-A `check-klayout` guard produces a clear error message when KLayout is
-missing and a target that needs it is invoked:
+A `check-klayout` guard produces a clear error message when the KLayout
+application is missing and a target that needs it is invoked:
 
 ```
 Error: KLayout not found. Install KLayout or set KLAYOUT_CMD.
@@ -73,5 +68,5 @@ python -m unittest test_generate_klayout_tech test_def2stream test_convertDrc te
 
 These tests cover:
 - `.lyt` tech file generation (`test_generate_klayout_tech.py`)
-- DEF-to-GDS merging logic and the choice of KLayout (`test_def2stream.py`)
+- DEF-to-GDS merging logic, and the error without the Python module (`test_def2stream.py`)
 - DRC report conversion (`test_convertDrc.py`)
