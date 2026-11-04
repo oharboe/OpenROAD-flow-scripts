@@ -63,6 +63,7 @@ flow/platforms/*
 !flow/platforms/sky130io
 !flow/platforms/sky130ram
 !flow/platforms/gf180
+!flow/platforms/gt2n
 flow/private
 
 # network
@@ -103,6 +104,8 @@ bazel-out
 bazel-OpenROAD-flow-scripts
 bazel-testlogs
 MODULE.bazel.lock
+# etc/kepler-formal
+bazel-kepler-formal
 
 # python venv
 venv/
