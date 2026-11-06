@@ -12,11 +12,19 @@ error and writes nothing:
 ERROR: the klayout Python module is not installed, pip install klayout (etc/requirements-common_lock.txt)
 ```
 
-DRC, LVS, the gallery and the viewers need the KLayout application,
-which you install yourself: [KLayout](https://www.klayout.de/build.html).
-The DRC and LVS rule decks are scripts in KLayout's Ruby-based DSL,
-which the Python module does not include. None of them runs in the
-default `make`.
+A DRC deck written in Python (`KLAYOUT_DRC_FILE` ends in `.py`) runs
+on the Python module too: `flow/util/klayout_drc.py` loads the GDS,
+runs the deck and writes the `.lyrdb` report. The decks are translated
+line by line from KLayout's Ruby-based DRC language, which the Python
+module does not include (KLayout/klayout#1772); that language is a thin
+layer over `klayout.db`'s `Region`, `Edges` and `EdgePairs`
+(KLayout/klayout#1980), and `klayout_drc.py` is that layer for the
+operations the decks use. Python decks: asap7.
+
+A deck still written in the Ruby-based language, LVS, the gallery and
+the viewers need the KLayout application, which you install yourself:
+[KLayout](https://www.klayout.de/build.html). None of DRC or LVS runs
+in the default `make`.
 
 ## Makefile Targets
 
@@ -24,7 +32,7 @@ default `make`.
 |---|---|---|
 | `make finish` | The Python module | Complete flow including GDS generation |
 | `make gds` | The Python module | Generate GDS/OAS from finished design |
-| `make drc` | The application | Run DRC checks (requires GDS) |
+| `make drc` | The Python module for a `.py` deck, else the application | Run DRC checks (requires GDS) |
 | `make lvs` | The application | Run LVS checks (requires GDS) |
 | `make gallery` | The application | Generate layout screenshots |
 | `make klayout_<file>` | The application | Open result in KLayout viewer |
@@ -70,3 +78,7 @@ These tests cover:
 - `.lyt` tech file generation (`test_generate_klayout_tech.py`)
 - DEF-to-GDS merging logic, and the error without the Python module (`test_def2stream.py`)
 - DRC report conversion (`test_convertDrc.py`)
+
+`test_klayout_drc.py` runs the checks of `flow/util/klayout_drc.py` on a
+small generated layout with the klayout Python module, and is skipped
+without it.
