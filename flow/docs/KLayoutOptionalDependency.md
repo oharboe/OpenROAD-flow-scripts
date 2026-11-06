@@ -21,8 +21,13 @@ layer over `klayout.db`'s `Region`, `Edges` and `EdgePairs`
 (KLayout/klayout#1980), and `klayout_drc.py` is that layer for the
 operations the decks use. Python decks: asap7, nangate45, sky130hd.
 
-A deck still written in the Ruby-based language, LVS, the gallery and
-the viewers need the KLayout application, which you install yourself:
+An LVS deck written in Python (`KLAYOUT_LVS_FILE` ends in `.py`) runs
+the same way: `flow/util/klayout_lvs.py` adds device extraction, the
+CDL schematic and `NetlistComparer` to it, and writes the `.lvsdb`.
+Python LVS decks: sky130hd.
+
+A deck still written in the Ruby-based language, the gallery and the
+viewers need the KLayout application, which you install yourself:
 [KLayout](https://www.klayout.de/build.html). None of DRC or LVS runs
 in the default `make`.
 
@@ -33,7 +38,7 @@ in the default `make`.
 | `make finish` | The Python module | Complete flow including GDS generation |
 | `make gds` | The Python module | Generate GDS/OAS from finished design |
 | `make drc` | The Python module for a `.py` deck, else the application | Run DRC checks (requires GDS) |
-| `make lvs` | The application | Run LVS checks (requires GDS) |
+| `make lvs` | The Python module for a `.py` deck, else the application | Run LVS checks (requires GDS) |
 | `make gallery` | The application | Generate layout screenshots |
 | `make klayout_<file>` | The application | Open result in KLayout viewer |
 | `make generate_abstract` | No | Generate LEF/LIB abstracts |
