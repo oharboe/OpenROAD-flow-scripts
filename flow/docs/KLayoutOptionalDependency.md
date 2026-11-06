@@ -19,7 +19,7 @@ line by line from KLayout's Ruby-based DRC language, which the Python
 module does not include (KLayout/klayout#1772); that language is a thin
 layer over `klayout.db`'s `Region`, `Edges` and `EdgePairs`
 (KLayout/klayout#1980), and `klayout_drc.py` is that layer for the
-operations the decks use. Python decks: asap7.
+operations the decks use. Python decks: asap7, nangate45.
 
 A deck still written in the Ruby-based language, LVS, the gallery and
 the viewers need the KLayout application, which you install yourself:
