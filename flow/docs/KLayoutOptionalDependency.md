@@ -19,7 +19,8 @@ line by line from KLayout's Ruby-based DRC language, which the Python
 module does not include (KLayout/klayout#1772); that language is a thin
 layer over `klayout.db`'s `Region`, `Edges` and `EdgePairs`
 (KLayout/klayout#1980), and `klayout_drc.py` is that layer for the
-operations the decks use. Python decks: asap7, nangate45, sky130hd.
+operations the decks use. Python decks: asap7, nangate45, sky130hd,
+ihp-sg13g2 (sg13g2_minimal).
 
 An LVS deck written in Python (`KLAYOUT_LVS_FILE` ends in `.py`) runs
 the same way: `flow/util/klayout_lvs.py` adds device extraction, the
