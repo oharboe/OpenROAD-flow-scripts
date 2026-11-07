@@ -272,10 +272,14 @@ do-auto-memories: $(RESULTS_DIR)/memories_inferred.json
 	  --yosys-json $(RESULTS_DIR)/memories_inferred.json \
 	  --out-dir $(RESULTS_DIR)/memories \
 	  --json $(RESULTS_DIR)/memories.json \
-	  $(foreach file,$(ADDITIONAL_MEMORIES),--memories $(file))
+	  $(foreach file,$(ADDITIONAL_MEMORIES),--memories $(file)) \
+	  $(foreach file,$(AUTO_MEMORIES_REGFILES),--regfile-spec $(file)) \
+	  $(foreach m,$(AUTO_MEMORIES_MACRO_PLACE),--macro-place $(m)) \
+	  $(if $(AUTO_MEMORIES_REGFILES),--openroad $(OPENROAD_EXE)) \
+	  $(foreach file,$(TECH_LEF) $(SC_LEF),--lef $(file))
 
 $(RESULTS_DIR)/memories.json: $(RESULTS_DIR)/memories_inferred.json $(ADDITIONAL_MEMORIES) \
-    $(wildcard $(SCRIPTS_DIR)/memories/*.py)
+    $(AUTO_MEMORIES_REGFILES) $(wildcard $(SCRIPTS_DIR)/memories/*.py)
 	$(UNSET_AND_MAKE) do-auto-memories
 
 yosys-dependencies: $(RESULTS_DIR)/memories.json
@@ -715,6 +719,10 @@ $(RESULTS_DIR)/6_final.sdc: $(LOG_DIR)/6_report.log
 
 $(RESULTS_DIR)/6_final.def: $(LOG_DIR)/6_report.log
 
+# Written only when final extracts parasitics (RCX_RULES set, detailed
+# route not skipped); generate_abstract reads it in that case.
+$(RESULTS_DIR)/6_final.spef: $(LOG_DIR)/6_report.log
+
 # The final results are called 6_final.*, so it is convenient when scripting
 # to have the names of the artifacts match the name of the target
 .PHONY: do-final
@@ -728,7 +736,7 @@ do-finish:
 	$(UNSET_AND_MAKE) do-6_1_fill do-6_1_fill.sdc do-6_report elapsed
 
 .PHONY: generate_abstract
-generate_abstract: $(RESULTS_DIR)/6_final.gds $(RESULTS_DIR)/6_final.def  $(RESULTS_DIR)/6_final.v $(RESULTS_DIR)/6_final.sdc
+generate_abstract: $(RESULTS_DIR)/6_final.gds $(RESULTS_DIR)/6_final.def  $(RESULTS_DIR)/6_final.v $(RESULTS_DIR)/6_final.sdc $(RESULTS_DIR)/6_final.spef
 	$(UNSET_AND_MAKE) do-generate_abstract
 
 # Set ABSTRACT_SOURCE if you want to create an abstract from another stage than 6_final.
