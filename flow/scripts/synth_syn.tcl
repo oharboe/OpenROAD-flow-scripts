@@ -1,5 +1,6 @@
 utl::set_metrics_stage "synth__{}"
 source $::env(SCRIPTS_DIR)/load.tcl
+source $::env(SCRIPTS_DIR)/formal_check.tcl
 erase_non_stage_variables synth
 
 source_env_var_if_exists PLATFORM_TCL
@@ -29,7 +30,8 @@ set elaborate_args [list \
   -D SYNTHESIS --compat=vcs --ignore-assertions --no-implicit-memories --top $::env(DESIGN_NAME) \
   {*}$vIdirsArgs {*}[env_var_or_empty VERILOG_DEFINES]]
 
-lappend elaborate_args {*}$::env(VERILOG_FILES)
+set verilog_files [synth_verilog_files]
+lappend elaborate_args {*}$verilog_files
 
 # Apply top-level parameters
 dict for {key value} [env_var_or_empty VERILOG_TOP_PARAMS] {
@@ -49,7 +51,7 @@ lappend elaborate_args {*}$::env(SYNTH_SLANG_ARGS)
 
 # If the sources are solely .v files, enable Verilog compatibility
 set has_non_v_files false
-foreach fn $::env(VERILOG_FILES) {
+foreach fn $verilog_files {
   if { [file extension [string trim $fn]] != ".v" } {
     set has_non_v_files true
   }
@@ -72,5 +74,14 @@ orfs_write_db $::env(RESULTS_DIR)/1_synth.odb
 # Canonicalize 1_synth.sdc. The original SDC_FILE provided by
 # the user could have dependencies, such as sourcing util.tcl,
 # which are read in here and a canonicalized version is written
-# out by OpenSTA that has no dependencies.
+# out by OpenSTA that has no dependencies. Sole writer of
+# 1_synth.sdc.
 orfs_write_sdc $::env(RESULTS_DIR)/1_synth.sdc
+
+# Gate-level netlist for downstream consumers. The Bazel synthesis action
+# declares this file as an output, so it must be written unconditionally.
+write_lec_verilog 1_synth.v
+
+if { $::env(LEC_CHECK) || $::env(SEC_CHECK) } {
+  write_lec_verilog 1_synth_lec.v
+}
