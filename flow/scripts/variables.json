@@ -18,6 +18,12 @@
       "synth"
     ]
   },
+  "ABC_SCRIPT": {
+    "description": "Replaces the ABC script synthesis runs, so that a design can vendor and\nchange it. Ignored when SYNTH_WRAPPED_OPERATORS or SWAP_ARITH_OPERATORS\nis set: abc_new then maps each arithmetic operator with its own script.\n",
+    "stages": [
+      "synth"
+    ]
+  },
   "ABSTRACT_SOURCE": {
     "description": "Which .odb file to use to create abstract\n",
     "stages": [
@@ -68,6 +74,18 @@
     "default": 0,
     "description": "Experimental. When set to 1, memories that yosys infers in the RTL (`$mem_v2` cells, module boundary only) are detected pre-synthesis, inventoried in `$(RESULTS_DIR)/memories.json`, and \u2014 when idiomatic as an SRAM macro \u2014 given generated .lib/.lef views under `$(RESULTS_DIR)/memories/`. Synthesis blackboxes those modules and all later stages read the generated views, so an existing design gets macro-based results without a memory compiler. Supported for the asap7 platform only. See docs/user/AutoMemories.md.\n"
   },
+  "AUTO_MEMORIES_MACRO_PLACE": {
+    "description": "Experimental. Space-separated list of module names of AUTO_MEMORIES_REGFILES register files to place as macros, blackboxed in synthesis and placed by the macro placer (and, in `mode netlist`, dissolved after macro placement). A register file not listed is inlined: its generated netlist of standard cells replaces the module's body in synthesis, and its cells are placed, sized and buffered with the rest of the design -- the better shape for a small design, where a macro's outline and channels cost more core than the array saves. A name no spec builds stops the build. Requires AUTO_MEMORIES=1.\n",
+    "stages": [
+      "synth"
+    ]
+  },
+  "AUTO_MEMORIES_REGFILES": {
+    "description": "Experimental. Space-separated list of register-file spec files, one per RTL module to build as a register file of placed standard cells rather than synthesise to flops. Each spec names its module, words, bits, read and write ports by the RTL's own port names, and the cells. memories/regfile_ram.py checks the spec against the module's ports and has OpenROAD's generate_ram build it as `<module>_ram`, under `$(RESULTS_DIR)/memories/`, with a wrapper in the module's place. A module named in AUTO_MEMORIES_MACRO_PLACE is blackboxed like an AUTO_MEMORIES macro and placed as one; any other is inlined as its generated netlist. A placed spec in `mode netlist` then dissolves into its cells after macro placement: its core FIRM where the macro was placed, in the macro's orientation, its periphery left to placement. Every register file appears in memories.json with kind `regfile`. Requires AUTO_MEMORIES=1.\n",
+    "stages": [
+      "synth"
+    ]
+  },
   "BALANCE_ROWS": {
     "default": 0,
     "description": "Balance rows during placement.\n",
@@ -107,6 +125,7 @@
     "default": 0,
     "description": "Cell padding on both sides in site widths to ease routability in detail placement.\n",
     "stages": [
+      "floorplan",
       "place",
       "cts",
       "grt"
@@ -228,12 +247,6 @@
       "cts"
     ]
   },
-  "CTS_SNAPSHOT": {
-    "description": "Creates ODB/SDC files prior to clock net and setup/hold repair.\n",
-    "stages": [
-      "cts"
-    ]
-  },
   "CTS_SNAPSHOTS": {
     "default": 0,
     "description": "Create ODB/SDC files at different stages of CTS.\n",
@@ -314,7 +327,10 @@
   },
   "DPO_MAX_DISPLACEMENT": {
     "default": "5 1",
-    "description": "Specifies how far an instance can be moved when optimizing.\n"
+    "description": "Specifies how far an instance can be moved when optimizing.\n",
+    "stages": [
+      "place"
+    ]
   },
   "EARLY_SIZING_CAP_RATIO": {
     "description": "Ratio between the input pin capacitance and the output pin load during initial gate sizing.\n",
@@ -324,7 +340,10 @@
   },
   "ENABLE_DPO": {
     "default": 1,
-    "description": "Enable detail placement with improve_placement feature.\n"
+    "description": "Enable detail placement with improve_placement feature.\n",
+    "stages": [
+      "place"
+    ]
   },
   "ENABLE_PLACE_REPAIR_TIMING": {
     "default": 0,
@@ -383,9 +402,11 @@
   "GDS_FILES": {
     "description": "Path to platform GDS files.\n"
   },
-  "GENERATE_ARTIFACTS_ON_FAILURE": {
-    "default": 0,
-    "description": "For instance Bazel needs artifacts (.odb and .rpt files) on a failure to allow the user to save hours on re-running the failed step locally, but when working with a Makefile flow, it is more natural to fail the step and leave the user to manually inspect the logs and artifacts directly via the file system. Set to 1 to change the behavior to generate artifacts upon failure to e.g. do a global route. The exit code will still be non-zero on all other failures that aren't covered by the \"useful to inspect the artifacts on failure\" use-case. Example: just like detailed routing, a global route that fails with congestion, is not a build failure(as in exit code non-zero), it is a successful(as in zero exit code) global route that produce reports detailing the problem. Detailed route will not proceed, if there is global routing congestion This allows build systems, such as bazel, to create artifacts for global and detailed route, even if the operation had problems, without having know about the semantics between global and detailed route. Considering that global and detailed route can run for a long time and use a lot of memory, this allows inspecting results on a laptop for a build that ran on a server.\n"
+  "GLOBAL_CONNECT_TCL": {
+    "description": "File path to the add_global_connection rules that connect the supply pins of the instances to the supply nets. Sourced at floorplan right after the netlist is loaded, before any step can mark an instance dont_touch; the rules are kept in the database. The platform's file by default; a design whose PDN_TCL names other supply nets sets its own. PDN_TCL defines the grids.\n",
+    "stages": [
+      "floorplan"
+    ]
   },
   "GLOBAL_PLACEMENT_ARGS": {
     "description": "Use additional tuning parameters during global placement other than default args defined in global_place.tcl.\n",
@@ -415,6 +436,13 @@
   },
   "GPL_KEEP_OVERFLOW": {
     "description": "Passed as -keep_resize_below_overflow to global_placement. Only used when GPL_TIMING_DRIVEN is enabled.\n",
+    "stages": [
+      "place"
+    ]
+  },
+  "GPL_PLACE_IOS": {
+    "default": 0,
+    "description": "Place IO pins together with the cells in global placement (-place_ios).\n",
     "stages": [
       "place"
     ]
@@ -531,9 +559,6 @@
   "LIB_MODEL": {
     "default": "NLDM",
     "description": "Selects between NLDM and CCS timing models for the ASAP7 platform. Valid values: NLDM (default), CCS. Used in flow/platforms/asap7/config.mk to pick the LIB_DIR subdirectory and accumulate the corresponding $(CORNER)_$(LIB_MODEL)_LIB_FILES list, and in flow/scripts/load.tcl to gate CCS-specific Tcl branches.\n"
-  },
-  "MACRO_EXTENSION": {
-    "description": "Sets the number of GCells added to the blockages boundaries from macros.\n"
   },
   "MACRO_PLACEMENT_TCL": {
     "description": "Specifies the path of a TCL file on how to place macros manually.\nThe user may choose to place just some of the macros in the design.\nThe macro placer will handle the remaining unplaced macros. Note\nthat using the macro placement file generated by the macro placer\nwill not result in the same global placement as actually running\nthe macro placer: the macro placement file does not contain the\nlocations that the macro placer generates for the standard cells,\nand those locations impact global placement.\n",
@@ -820,6 +845,10 @@
       "synth"
     ]
   },
+  "POWER_FILE_SCOPE": {
+    "description": "The SAIF or VCD scope of the current design. Typically the test bench name and design under the test instance name. Scope levels are separated with '/'.\n",
+    "type": "string"
+  },
   "PRE_CTS_TCL": {
     "description": "Specifies a Tcl script with commands to run before CTS.\n",
     "stages": [
@@ -932,14 +961,6 @@
     "default": 0,
     "description": "Specifies how many percent of paths with positive slacks can be slowed for power savings [0-100].\n"
   },
-  "REMOVE_ABC_BUFFERS": {
-    "default": 0,
-    "deprecated": 1,
-    "description": "Remove abc buffers from the netlist. If timing repair in floorplanning is taking too long, use a SETUP/HOLD_SLACK_MARGIN to terminate timing repair early instead of using REMOVE_ABC_BUFFERS or set SKIP_LAST_GASP=1. Some designs still need it to reach their QoR targets.\n",
-    "stages": [
-      "floorplan"
-    ]
-  },
   "REMOVE_CELLS_FOR_LEC": {
     "description": "String patterns directly passed to write_verilog -remove_cells <> for lec checks.\n",
     "type": "string"
@@ -951,6 +972,19 @@
     "default": 1,
     "description": "Report clock skew as part of reporting metrics, starting at CTS, before which there is no clock skew. This metric can be quite time-consuming, so it can be useful to disable.\n",
     "stages": [
+      "cts",
+      "grt",
+      "route",
+      "final"
+    ]
+  },
+  "REPORT_ENDPOINT_SLACK": {
+    "default": 0,
+    "description": "If set to 1, write the setup and hold slack of every timing endpoint at the end of every flow step (e.g. 3_3_place_gp) to $REPORTS_DIR/<step>_endpoint_slack.json. These snapshots can be compared across steps with flow/util/endpointSlack.py. See docs/contrib/EndpointSlackTracking.md.\n",
+    "stages": [
+      "synth",
+      "floorplan",
+      "place",
       "cts",
       "grt",
       "route",
@@ -1108,18 +1142,16 @@
   "RUN_SCRIPT": {
     "description": "Path to script to run from `make run`, python or tcl script detected by .py or .tcl extension.\n"
   },
+  "SAIF_FILE": {
+    "description": "Specifies the Switching Activity Interchange Format (SAIF) file containing pin activities and duty cycles for use in power calculation.\n",
+    "type": "string"
+  },
   "SC_LEF": {
     "description": "Path to technology standard cell LEF file.\n"
   },
   "SDC_FILE": {
     "description": "The path to design constraint (SDC) file.\n",
     "required": true,
-    "stages": [
-      "synth"
-    ]
-  },
-  "SDC_GUT": {
-    "description": "Load design and remove all internal logic before doing synthesis. This is useful when creating a mock .lef abstract that has a smaller area than the amount of logic would allow. bazel-orfs uses this to mock SRAMs, for instance.\n",
     "stages": [
       "synth"
     ]
@@ -1141,6 +1173,15 @@
       "cts",
       "floorplan",
       "grt"
+    ]
+  },
+  "SETUP_REPAIR_PHASES": {
+    "description": "Passed as -phases to repair_timing. This should be a string of setup repair phase names separated by spaces. Set to PARALLEL_EVAL to repair setup timing with the experimental parallel evaluation policy. When unset, repair_timing runs its default phases.\n",
+    "stages": [
+      "cts",
+      "floorplan",
+      "grt",
+      "place"
     ]
   },
   "SETUP_SLACK_MARGIN": {
@@ -1165,13 +1206,6 @@
     "description": "Skips antenna repair post-detailed routing.\n",
     "stages": [
       "route"
-    ]
-  },
-  "SKIP_ANTENNA_REPAIR_PRE_GRT": {
-    "default": 0,
-    "description": "Skips antenna repair pre-global routing.\n",
-    "stages": [
-      "grt"
     ]
   },
   "SKIP_BUFFER_REMOVAL": {
@@ -1202,7 +1236,15 @@
     "description": "Skips detailed route.\n",
     "stages": [
       "route",
-      "final"
+      "final",
+      "generate_abstract"
+    ]
+  },
+  "SKIP_FLOORPLAN_REPAIR_TIMING": {
+    "default": 0,
+    "description": "Skipping floorplan repair which sometimes does too much optimization too early.\n",
+    "stages": [
+      "floorplan"
     ]
   },
   "SKIP_GATE_CLONING": {
@@ -1288,6 +1330,12 @@
       "synth"
     ]
   },
+  "SYNTH_BLACKBOXES_FILE": {
+    "description": "Path to a file with more modules to treat as black boxes, one name per line, added to SYNTH_BLACKBOXES. For a parallel synthesis whose list is too long for one environment variable: Linux caps one at 128 KiB.\n",
+    "stages": [
+      "synth"
+    ]
+  },
   "SYNTH_CANONICALIZE_TCL": {
     "description": "Specifies a Tcl script with commands to run as part of the synth canonicalize step.\n",
     "stages": [
@@ -1344,14 +1392,14 @@
     ]
   },
   "SYNTH_KEEP_MODULES": {
-    "description": "Mark modules to keep from getting removed in flattening.\n",
+    "description": "Mark modules to keep from getting removed in flattening.\nWhen the whole design is synthesized, a name that matches no module\nof the design stops synthesis. In a partition of a parallel synthesis\n(SYNTH_CHECKPOINT set) a kept module of another partition is not in\nthe partition's checkpoint, and its name is skipped.\n",
     "stages": [
       "synth"
     ]
   },
   "SYNTH_MEMORY_MAX_BITS": {
     "default": 4096,
-    "description": "Maximum number of bits for memory synthesis. Ideally, real RAM or realistic fakeram should be used for RAMs much larger than 1024 bits. To temporarily ignore the RAM concerns and investigate other aspects of the design, consider setting `SYNTH_MOCK_LARGE_MEMORIES=1`, or adjusting `SYNTH_MEMORY_MAX_BITS`.\n",
+    "description": "Maximum number of bits for memory synthesis. Ideally, real RAM or realistic fakeram should be used for RAMs much larger than 1024 bits. To temporarily ignore the RAM concerns and investigate other aspects of the design, consider setting `SYNTH_MOCK_LARGE_MEMORIES=1`, or adjusting `SYNTH_MEMORY_MAX_BITS`. ROMs, inferred memories with no write port, are not counted: a ROM holds constants that synthesis maps to logic like any other, and it goes through the normal flow. The limit is there so that a read/write memory, which belongs in a macro (`AUTO_MEMORIES`, fakeram) or a mock, does not go undetected into flip-flops; raising it to admit a large ROM would let read/write memories of that size through too.\n",
     "stages": [
       "synth"
     ]
@@ -1419,6 +1467,18 @@
   "SYNTH_USE_SYN": {
     "default": 0,
     "description": "If set to 1, run synthesis using the \"syn\" tool built into OpenROAD (the synth_syn.tcl flow) instead of the default Yosys-based flow. Defaults to 0 (Yosys flow).\n",
+    "stages": [
+      "synth"
+    ]
+  },
+  "SYNTH_VERILOG_SURGERY": {
+    "description": "RTL surgery as a step of the flow: a script that copies VERILOG_FILES and edits the copies before synthesis reads them, so vendored RTL stays byte-identical to upstream and the OpenROAD- and PDK-specific changes live in one script next to the design's config.mk. Typical surgery gives a memory or register file a module of its own that AUTO_MEMORIES can convert, maps a clock gate onto the platform's, rewrites a pragma for the frontend, or removes a simulation construct. A new upstream version is then a plain copy: the surgery reapplies, or stops where upstream moved. Best on generated or regular RTL (firtool, sv2v, netlists); a text edit cannot see the meaning of include files, macros, packages or `bind`. As the RTL is read (canonicalization, memory extraction, and the SYNTH_USE_SYN frontend), it runs with SYNTH_VERILOG_SURGERY_ARGS, then `--out-dir $(OBJECTS_DIR)/surgery --` and the VERILOG_FILES (by PYTHON_EXE when it ends in .py), and writes one copy per source under the same file name; synthesis reads the copies. Input file names must be unique. Diff a copy against its original to see exactly what the surgery changed. The script should fail when it does not recognise its input; a failing script, or a copy it did not write, stops synthesis.\n",
+    "stages": [
+      "synth"
+    ]
+  },
+  "SYNTH_VERILOG_SURGERY_ARGS": {
+    "description": "Arguments to SYNTH_VERILOG_SURGERY, before the ones the flow adds.\n",
     "stages": [
       "synth"
     ]
@@ -1496,6 +1556,10 @@
     "default": 0,
     "description": "Whether to perform metal density filling.\n"
   },
+  "VCD_FILE": {
+    "description": "Specifies the Value Change Dump (VCD) file containing pin activities and duty cycles for use in power calculation.\n",
+    "type": "string"
+  },
   "VERILOG_DEFINES": {
     "description": "Preprocessor defines passed to the language frontend. Example: `-D HPDCACHE_ASSERT_OFF`\n",
     "stages": [
@@ -1534,6 +1598,10 @@
       "grt",
       "route"
     ]
+  },
+  "WIRE_LOAD_MODEL": {
+    "description": "Name of a Liberty wire_load group applied with set_wire_load_model\nwhenever open.tcl reads timing. OpenSTA applies a wire-load model only\nto nets without parasitics, so it gives wire delay to timing read\nbefore placement and leaves placed and routed timing unaffected. An\nunknown name is an error. Empty, the default, applies none. A platform\nwhose libraries define no wire_load group can supply one in a Liberty\nfile listed in ADDITIONAL_LIBS.\n",
+    "type": "string"
   },
   "WRITE_ODB_AND_SDC_EACH_STAGE": {
     "default": 1,
