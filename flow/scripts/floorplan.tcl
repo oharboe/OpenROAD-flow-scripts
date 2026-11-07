@@ -2,6 +2,15 @@ utl::set_metrics_stage "floorplan__{}"
 source $::env(SCRIPTS_DIR)/load.tcl
 erase_non_stage_variables floorplan
 load_design 1_synth.odb 1_synth.sdc
+
+# The global connections, before any step can mark an instance
+# dont_touch: global_connect skips one (ODB-0383). The rules stay in the
+# database for a later step that creates instances.
+if { [env_var_exists_and_non_empty GLOBAL_CONNECT_TCL] } {
+  log_cmd source $::env(GLOBAL_CONNECT_TCL)
+  log_cmd global_connect
+}
+
 source_step_tcl PRE FLOORPLAN
 
 proc report_unused_masters { } {
@@ -151,8 +160,10 @@ if { [env_var_equals SWAP_ARITH_OPERATORS 1] } {
   log_cmd replace_arith_modules
 }
 
-# Skip clone & split
-repair_timing_helper -setup -skip_last_gasp -sequence "unbuffer,sizeup,swap,vt_swap"
+if { !$::env(SKIP_FLOORPLAN_REPAIR_TIMING) } {
+  # Skip clone & split
+  repair_timing_helper -setup -skip_last_gasp -sequence "unbuffer,sizeup,swap,vt_swap"
+}
 
 puts "Default units for flow"
 report_units
