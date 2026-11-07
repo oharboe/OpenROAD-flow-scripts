@@ -24,9 +24,9 @@ proc do_dpl { } {
   }
   log_cmd optimize_mirroring
 
-  utl::info FLW 12 "Placement violations [check_placement -verbose]."
+  utl::info FLW 12 "Placement violations [check_placement -placeable -verbose]."
 
-  log_cmd estimate_parasitics -placement
+  log_cmd estimate_parasitics
 }
 
 set result [catch { do_dpl } errMsg]
