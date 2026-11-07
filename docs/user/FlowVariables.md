@@ -158,6 +158,7 @@ configuration file.
 | <a name="GDS_ALLOW_EMPTY"></a>GDS_ALLOW_EMPTY| Single regular expression of module names of macros that have no .gds file| |
 | <a name="GDS_FILES"></a>GDS_FILES| Path to platform GDS files.| |
 | <a name="GENERATE_ARTIFACTS_ON_FAILURE"></a>GENERATE_ARTIFACTS_ON_FAILURE| For instance Bazel needs artifacts (.odb and .rpt files) on a failure to allow the user to save hours on re-running the failed step locally, but when working with a Makefile flow, it is more natural to fail the step and leave the user to manually inspect the logs and artifacts directly via the file system. Set to 1 to change the behavior to generate artifacts upon failure to e.g. do a global route. The exit code will still be non-zero on all other failures that aren't covered by the "useful to inspect the artifacts on failure" use-case. Example: just like detailed routing, a global route that fails with congestion, is not a build failure(as in exit code non-zero), it is a successful(as in zero exit code) global route that produce reports detailing the problem. Detailed route will not proceed, if there is global routing congestion This allows build systems, such as bazel, to create artifacts for global and detailed route, even if the operation had problems, without having know about the semantics between global and detailed route. Considering that global and detailed route can run for a long time and use a lot of memory, this allows inspecting results on a laptop for a build that ran on a server.| 0|
+| <a name="GLOBAL_CONNECT_TCL"></a>GLOBAL_CONNECT_TCL| File path to the add_global_connection rules that connect the supply pins of the instances to the supply nets. Sourced at floorplan right after the netlist is loaded, before any step can mark an instance dont_touch; the rules are kept in the database. The platform's file by default; a design whose PDN_TCL names other supply nets sets its own. PDN_TCL defines the grids.| |
 | <a name="GLOBAL_PLACEMENT_ARGS"></a>GLOBAL_PLACEMENT_ARGS| Use additional tuning parameters during global placement other than default args defined in global_place.tcl.| |
 | <a name="GLOBAL_ROUTE_ARGS"></a>GLOBAL_ROUTE_ARGS| Replaces default arguments for global route. The -congestion_iterations default is set by the flow (30 for FastRoute, 10 for CUGR); add -congestion_iterations here to override it.| -congestion_report_iter_step 5 -verbose|
 | <a name="GLOBAL_ROUTE_USE_CUGR"></a>GLOBAL_ROUTE_USE_CUGR| Passed as -use_cugr to global_route. Uses CUGR as the global routing solver instead of the default FastRoute solver. NOTE: CUGR is not ready for production.| 0|
@@ -301,6 +302,7 @@ configuration file.
 | <a name="SWAP_ARITH_OPERATORS"></a>SWAP_ARITH_OPERATORS| Improve timing QoR by swapping ALU and MULT arithmetic operators.| 0|
 | <a name="SYNTH_ARGS"></a>SYNTH_ARGS| Optional synthesis variables for yosys.| |
 | <a name="SYNTH_BLACKBOXES"></a>SYNTH_BLACKBOXES| List of cells treated as a black box by Yosys. With Bazel, this can be used to run synthesis in parallel for the large modules of the design. Non-existant modules are ignored silently, useful when listing modules statically, even if modules come and go dynamically.| |
+| <a name="SYNTH_BLACKBOXES_FILE"></a>SYNTH_BLACKBOXES_FILE| Path to a file with more modules to treat as black boxes, one name per line, added to SYNTH_BLACKBOXES. For a parallel synthesis whose list is too long for one environment variable: Linux caps one at 128 KiB.| |
 | <a name="SYNTH_CANONICALIZE_TCL"></a>SYNTH_CANONICALIZE_TCL| Specifies a Tcl script with commands to run as part of the synth canonicalize step.| |
 | <a name="SYNTH_CHECKPOINT"></a>SYNTH_CHECKPOINT| Path to a Yosys RTLIL checkpoint to read in place of the default canonicalization checkpoint at the start of synth.tcl. Intended for parallel synthesis flows that reuse a checkpoint taken after coarse synthesis and `keep_hierarchy` have already been decided, so each partition skips that common prefix. Leave unset for the normal flow.| |
 | <a name="SYNTH_GUT"></a>SYNTH_GUT| Load design and remove all internal logic before doing synthesis. This is useful when creating a mock .lef abstract that has a smaller area than the amount of logic would allow. bazel-orfs uses this to mock SRAMs, for instance.| 0|
@@ -374,6 +376,7 @@ configuration file.
 - [SKIP_REPORT_METRICS](#SKIP_REPORT_METRICS)
 - [SYNTH_ARGS](#SYNTH_ARGS)
 - [SYNTH_BLACKBOXES](#SYNTH_BLACKBOXES)
+- [SYNTH_BLACKBOXES_FILE](#SYNTH_BLACKBOXES_FILE)
 - [SYNTH_CANONICALIZE_TCL](#SYNTH_CANONICALIZE_TCL)
 - [SYNTH_CHECKPOINT](#SYNTH_CHECKPOINT)
 - [SYNTH_GUT](#SYNTH_GUT)
@@ -420,6 +423,7 @@ configuration file.
 - [FLOORPLAN_DEF](#FLOORPLAN_DEF)
 - [FOOTPRINT](#FOOTPRINT)
 - [FOOTPRINT_TCL](#FOOTPRINT_TCL)
+- [GLOBAL_CONNECT_TCL](#GLOBAL_CONNECT_TCL)
 - [HOLD_SLACK_MARGIN](#HOLD_SLACK_MARGIN)
 - [IO_CONSTRAINTS](#IO_CONSTRAINTS)
 - [MACRO_PLACEMENT_TCL](#MACRO_PLACEMENT_TCL)
@@ -658,6 +662,7 @@ configuration file.
 ## generate_abstract variables
 
 - [ABSTRACT_SOURCE](#ABSTRACT_SOURCE)
+- [SKIP_DETAILED_ROUTE](#SKIP_DETAILED_ROUTE)
 
 ## Uncategorized variables
 

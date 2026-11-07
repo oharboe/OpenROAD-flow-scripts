@@ -372,6 +372,13 @@ SYNTH_BLACKBOXES:
     statically, even if modules come and go dynamically.
   stages:
     - synth
+SYNTH_BLACKBOXES_FILE:
+  description: >
+    Path to a file with more modules to treat as black boxes, one name per
+    line, added to SYNTH_BLACKBOXES. For a parallel synthesis whose list is
+    too long for one environment variable: Linux caps one at 128 KiB.
+  stages:
+    - synth
 SYNTH_CHECKPOINT:
   description: >
     Path to a Yosys RTLIL checkpoint to read in place of the default
@@ -638,6 +645,16 @@ PDN_TCL:
     File path which has a set of power grid policies used by pdn to be applied
     to the design, such as layers to use, stripe width and spacing to generate
     the actual metal straps.
+  stages:
+    - floorplan
+GLOBAL_CONNECT_TCL:
+  description: >
+    File path to the add_global_connection rules that connect the supply pins
+    of the instances to the supply nets. Sourced at floorplan right after the
+    netlist is loaded, before any step can mark an instance dont_touch; the
+    rules are kept in the database. The platform's file by default; a design
+    whose PDN_TCL names other supply nets sets its own. PDN_TCL defines the
+    grids.
   stages:
     - floorplan
 MAKE_TRACKS:
@@ -1665,6 +1682,7 @@ SKIP_DETAILED_ROUTE:
   stages:
     - route
     - final
+    - generate_abstract
 MAX_REPAIR_ANTENNAS_ITER_DRT:
   default: 5
   description: >
