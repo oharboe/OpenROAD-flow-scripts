@@ -154,17 +154,21 @@ _installPipCommon() {
     local lockfile piplock
     lockfile="${_script_dir}/requirements-common_lock.txt"
     piplock="${_script_dir}/requirements-pip_lock.txt"
-    if [[ "$OSTYPE" == "darwin"* ]]; then
+    if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+        # The lock goes into the virtual environment, created if it does
+        # not exist yet; the Docker images name one with ENV VIRTUAL_ENV.
+        if [[ ! -x "${VIRTUAL_ENV}/bin/python3" ]]; then
+            python3 -m venv "${VIRTUAL_ENV}"
+        fi
+        "${VIRTUAL_ENV}/bin/python3" -m pip install --no-cache-dir --upgrade --require-hashes -r "$piplock"
+        "${VIRTUAL_ENV}/bin/python3" -m pip install --no-cache-dir -r "$lockfile"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
         if [[ "$EUID" -eq 0 ]]; then
             echo "Error: Do NOT run with sudo."
             exit 1
         fi
-        if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-            python3 -m pip install --no-cache-dir -r "$lockfile"
-        else
-            echo "Error: Activate a virtual environment on macOS."
-            exit 1
-        fi
+        echo "Error: Activate a virtual environment on macOS."
+        exit 1
     else
         # pip before 23.3 fails --require-hashes on requirements-common_lock.txt:
         # it does not match an extras-bearing pin such as
@@ -421,8 +425,10 @@ _installUbuntuPackages() {
                 klayoutChecksum=6dfffa50f385881768dee30bdc759608
             elif [[ $1 == 24.04 ]]; then
                 klayoutChecksum=0181713e60891e461d6d1664c1b8e213
+            elif [[ $1 == 26.04 ]]; then
+                klayoutChecksum=904f60fd05c3a5029cab8a2840029f49
             else
-                echo "Unsupported Ubuntu version $1. Supported versions: 22.04, 24.04. Please upgrade to a supported LTS release or install KLayout ${klayoutVersion} manually from https://www.klayout.org/build.html"
+                echo "Unsupported Ubuntu version $1. KLayout ${klayoutVersion} packages are pinned for 22.04, 24.04, and 26.04. Please upgrade to a supported LTS release or install KLayout ${klayoutVersion} manually from https://www.klayout.org/build.html"
                 exit 1
             fi
             wget https://www.klayout.org/downloads/Ubuntu-${1%.*}/klayout_${klayoutVersion}-1_amd64.deb
@@ -656,7 +662,7 @@ case "${os}" in
     "CentOS Linux" | "Red Hat Enterprise Linux"* | "AlmaLinux" | "Rocky Linux")
         # Enterprise Linux support - dispatch based on specific version
         if [[ ${CI} == "yes" ]]; then
-            echo "WARNING: Installing CI dependencies is only supported on Ubuntu 22.04" >&2
+            echo "WARNING: Installing CI dependencies is only supported on Ubuntu 24.04 and 26.04" >&2
         fi
 
         # Detect EL version to choose appropriate functions
@@ -719,12 +725,25 @@ case "${os}" in
             _installCmake
         fi
         if [[ $version != "rodete" ]]; then
-            if [[ "${option}" == "common" || "${option}" == "all" ]]; then
-                if _versionCompare ${version} -lt 23.04 ; then
+            if _versionCompare ${version} -lt 23.04 ; then
+                if [[ "${option}" == "common" || "${option}" == "all" ]]; then
                     _installPipCommon
-                else
-                    if [[ "${option}" == "base" || "${option}" == "all" ]]; then
-                        _installPipSystem
+                fi
+            else
+                # The system Python is externally managed (PEP 668): its
+                # packages come from apt, in -base with the other system
+                # packages. The lock, which also has packages apt does not
+                # carry, goes into a virtual environment when one is named.
+                if [[ "${option}" == "base" || "${option}" == "all" ]]; then
+                    _installPipSystem
+                fi
+                if [[ "${option}" == "common" || "${option}" == "all" ]]; then
+                    if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+                        _installPipCommon
+                    else
+                        echo "Python packages from apt only. For those in" \
+                            "etc/requirements-common_lock.txt that apt does" \
+                            "not carry, set VIRTUAL_ENV and run -common again."
                     fi
                 fi
             fi
@@ -734,7 +753,7 @@ case "${os}" in
         ;;
     "Darwin" )
         if [[ ${CI} == "yes" ]]; then
-            echo "WARNING: Installing CI dependencies is only supported on Ubuntu 22.04" >&2
+            echo "WARNING: Installing CI dependencies is only supported on Ubuntu 24.04 and 26.04" >&2
         fi
         _installORDependencies
         if [[ "${option}" == "base" || "${option}" == "all" ]]; then
