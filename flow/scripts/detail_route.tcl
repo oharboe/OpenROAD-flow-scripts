@@ -2,10 +2,6 @@ utl::set_metrics_stage "detailedroute__{}"
 source $::env(SCRIPTS_DIR)/load.tcl
 load_design 5_1_grt.odb 5_1_grt.sdc
 source_step_tcl PRE DETAIL_ROUTE
-if { ![grt::have_routes] } {
-  error "Global routing failed, run `make gui_grt` and load $::global_route_congestion_report \
-        in DRC viewer to view congestion"
-}
 
 if { !$::env(SKIP_DETAILED_ROUTE) } {
   erase_non_stage_variables route
@@ -65,7 +61,7 @@ if { !$::env(SKIP_DETAILED_ROUTE) } {
       incr repair_antennas_iters
     }
   } else {
-    utl::metric_int "antenna_diodes_count" -1
+    utl::metric_integer "antenna_diodes_count" -1
   }
 
   source_step_tcl POST DETAIL_ROUTE
