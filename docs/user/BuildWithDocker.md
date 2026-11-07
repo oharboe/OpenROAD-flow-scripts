@@ -11,7 +11,7 @@ please refer to the [Docker Shell](./DockerShell.md) documentation.
 - For this method you only need to install
 [Docker](https://docs.docker.com/engine/install) on your machine.
 - Ensure that you have sufficient memory allocated to the Virtual Machine (VM)
-as per our system [requirements](../index.md#system-requirements). Refer to
+as per our system [requirements](../index2.md#system-requirements). Refer to
 this [Docker guide](https://docs.docker.com/config/containers/resource_constraints/) for setting CPU cores and memory limits.
 
 :::{Warning}
@@ -25,14 +25,14 @@ then is recommended that you restrict the number of CPUs used by the scripts
 :::
 
 ``` shell
-docker run --rm ubuntu:22.04 nproc
+docker run --rm ubuntu:26.04 nproc
 ```
 
 ### Build Using Docker from pre-built binaries
 
 Courtesy of [Precision Innovations](https://precisioninno.com/),
-they release `.deb` installers of OpenROAD for Ubuntu
-and Debian on a regular basis.
+pre-built `.deb` installers of OpenROAD for Ubuntu
+are available from [OpenROAD VaultLink](https://vaultlink.precisioninno.com/).
 This greatly helps to reduce the compilation time needed.
 
 We recommend to use a Docker image of a supported OS
@@ -57,7 +57,7 @@ do follow the instructions below.
 
 #### Clone and Build
 
-The following instructions build the docker image with Ubuntu 22.04 as the base OS:
+The following instructions build the docker image with Ubuntu 26.04 as the base OS:
 
 
 ``` shell
@@ -145,7 +145,7 @@ Do refer to the documentation [here](./DockerShell.md).
 
 The following instructions build the docker image with a parameterized OS
 in two stages. These are for CI and developers that wish to use an OS other
-than Ubuntu 22.04; regular users should use the steps from previous sections.
+than Ubuntu 26.04; regular users should use the steps from previous sections.
 The dev stage installs all dependencies and packages required to run OpenROAD
 and OpenROAD Flow Scripts. The build stage generates all binaries needed to run
 the flow (i.e., `openroad` and `yosys`).
@@ -156,3 +156,5 @@ cd OpenROAD-flow-scripts
 ./etc/DockerHelper.sh create -target=dev -os=$OS_NAME
 ./etc/DockerHelper.sh create -target=builder -os=$OS_NAME
 ```
+
+Valid values for `$OS_NAME` are `ubuntu26.04` and `ubuntu24.04`.
