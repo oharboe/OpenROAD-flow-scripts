@@ -66,12 +66,6 @@ export CLKGATE_MAP_FILE = $(PLATFORM_DIR)/cells_clkgate.v
 # Define ABC driver and load
 export ABC_DRIVER_CELL = sg13g2_buf_4
 export ABC_LOAD_IN_FF = 6.0
-ifeq ($(origin ABC_CLOCK_PERIOD_IN_PS), undefined)
-  ifneq ($(wildcard $(SDC_FILE)),)
-    # Set yosys-abc clock period to first "clk_period" value or "-period" value found in sdc file
-    export ABC_CLOCK_PERIOD_IN_PS ?= $(shell sed -nE "s/^set clk_period (.+)|.* -period (.+) .*/\1\2/p" $(SDC_FILE) | head -1 | awk '{print $$1*1000}')
-  endif
-endif
 
 # -----------------------------------------------------
 #  Sizing
@@ -92,6 +86,7 @@ export IO_PLACER_V ?= Metal2
 export IO_PLACER_H ?= Metal3
 
 # Define default PDN config
+export GLOBAL_CONNECT_TCL ?= $(PLATFORM_DIR)/global_connect.tcl
 export PDN_TCL ?= $(PLATFORM_DIR)/pdn.tcl
 
 # To allow the core rings to fit inside the core area
