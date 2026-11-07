@@ -14,6 +14,15 @@ proc global_route_helper { } {
   set use_cugr ""
   append_env_var use_cugr GLOBAL_ROUTE_USE_CUGR -use_cugr 0
 
+  # The flow's choice to accept congestion, from GLOBAL_ROUTE_ARGS, passed
+  # to every incremental reroute and to repair_antennas: each call decides
+  # for itself, and one without -allow_congestion reroutes a congested route
+  # harder and then fails on it.
+  set allow_congestion ""
+  if { [lsearch -exact $::env(GLOBAL_ROUTE_ARGS) -allow_congestion] >= 0 } {
+    set allow_congestion -allow_congestion
+  }
+
   proc set_grt_seed { } {
     set seed_arg [env_var_or_empty GRT_SEED]
     if { $seed_arg ne "" } {
@@ -30,7 +39,8 @@ proc global_route_helper { } {
         error $errMsg
       }
       orfs_write_sdc $::env(RESULTS_DIR)/5_1_grt.sdc
-      orfs_write_db $::env(RESULTS_DIR)/5_1_grt.odb
+      # A route that failed has no parasitics to time the endpoints with.
+      orfs_write_db $::env(RESULTS_DIR)/5_1_grt.odb 0
       return 0
     }
     return 1
@@ -65,7 +75,7 @@ proc global_route_helper { } {
     -right $::env(CELL_PAD_IN_SITES_DETAIL_PLACEMENT)
 
   set_propagated_clock [all_clocks]
-  log_cmd estimate_parasitics -global_routing
+  log_cmd estimate_parasitics
 
   if { [env_var_exists_and_non_empty DONT_USE_CELLS] } {
     set_dont_use $::env(DONT_USE_CELLS)
@@ -84,11 +94,12 @@ proc global_route_helper { } {
 
     # Running DPL to fix overlapped instances
     # Run to get modified net by DPL
-    log_cmd global_route -start_incremental
-    log_cmd detailed_placement
+    log_cmd global_route -start_incremental {*}$allow_congestion
+    detailed_placement_helper -quiet
     # Route only the modified net by DPL
     if {
       ![run_global_route_and_catch_failures -end_incremental {*}$res_aware \
+        {*}$allow_congestion \
         -congestion_report_file $::env(REPORTS_DIR)/congestion_post_repair_design.rpt]
     } {
       return 0
@@ -96,7 +107,7 @@ proc global_route_helper { } {
 
     # Repair timing using global route parasitics
     puts "Repair setup and hold violations..."
-    log_cmd estimate_parasitics -global_routing
+    log_cmd estimate_parasitics
 
     repair_timing_helper
 
@@ -104,18 +115,19 @@ proc global_route_helper { } {
       report_metrics 5 "global route post repair timing"
     }
 
-    log_cmd global_route -start_incremental
-    log_cmd detailed_placement
-    log_cmd check_placement -verbose
+    log_cmd global_route -start_incremental {*}$allow_congestion
+    detailed_placement_helper -quiet
+    log_cmd check_placement -placeable -verbose
     # Route only the modified net by DPL
     if {
       ![run_global_route_and_catch_failures -end_incremental {*}$res_aware \
+        {*}$allow_congestion \
         -congestion_report_file $::env(REPORTS_DIR)/congestion_post_repair_timing.rpt]
     } {
       return 0
     }
 
-    log_cmd estimate_parasitics -global_routing
+    log_cmd estimate_parasitics
 
     if { $::env(OPT_POST_GRT_WNS) } {
       set repair_timing_args \
@@ -135,11 +147,12 @@ proc global_route_helper { } {
   }
 
   if { !$::env(OPT_POST_GRT_WNS) } {
-    log_cmd global_route -start_incremental
+    log_cmd global_route -start_incremental {*}$allow_congestion
     recover_power_helper
     # Route the modified nets by rsz journal restore
     if {
       ![run_global_route_and_catch_failures -end_incremental {*}$res_aware \
+        {*}$allow_congestion \
         -congestion_report_file $::env(REPORTS_DIR)/congestion_post_recover_power.rpt]
     } {
       return 0
@@ -151,14 +164,15 @@ proc global_route_helper { } {
     [env_var_exists_and_non_empty MAX_REPAIR_ANTENNAS_ITER_GRT]
   } {
     puts "Repair antennas..."
-    repair_antennas -iterations $::env(MAX_REPAIR_ANTENNAS_ITER_GRT)
+    repair_antennas -iterations $::env(MAX_REPAIR_ANTENNAS_ITER_GRT) \
+      {*}$allow_congestion
     # repair antennas calls DPL internally
-    check_placement -verbose
+    log_cmd check_placement -placeable -verbose
     check_antennas -report_file $::env(REPORTS_DIR)/grt_antennas.log
   }
 
   puts "Estimate parasitics..."
-  log_cmd estimate_parasitics -global_routing
+  log_cmd estimate_parasitics
 
   report_metrics 5 "global route"
 
