@@ -32,6 +32,7 @@ proc repair_timing_helper { args } {
   append_env_var additional_args SETUP_SLACK_MARGIN -setup_margin 1
   append_env_var additional_args HOLD_SLACK_MARGIN -hold_margin 1
   append_env_var additional_args SETUP_MOVE_SEQUENCE -sequence 1
+  append_env_var additional_args SETUP_REPAIR_PHASES -phases 1
   append_env_var additional_args TNS_END_PERCENT -repair_tns 1
   append_env_var additional_args SKIP_PIN_SWAP -skip_pin_swap 0
   append_env_var additional_args SKIP_GATE_CLONING -skip_gate_cloning 0
@@ -152,6 +153,43 @@ proc env_var_or_empty { env_var } {
   return ""
 }
 
+proc pins_fixed_in_floorplan { } {
+  return [expr {
+    [env_var_exists_and_non_empty FLOORPLAN_DEF] ||
+    [env_var_exists_and_non_empty FOOTPRINT] ||
+    [env_var_exists_and_non_empty FOOTPRINT_TCL]
+  }]
+}
+
+# set_place_config arguments for global_placement -place_ios, from the
+# place_pins settings.
+proc place_pins_args_to_place_config { } {
+  set config_args [list \
+    -io_pin_hor_layers $::env(IO_PLACER_H) \
+    -io_pin_ver_layers $::env(IO_PLACER_V)]
+  set pins_args [env_var_or_empty PLACE_PINS_ARGS]
+  for { set i 0 } { $i < [llength $pins_args] } { incr i } {
+    set arg [lindex $pins_args $i]
+    switch -- $arg {
+      -corner_avoidance -
+      -min_distance {
+        lappend config_args -io_pin_[string range $arg 1 end] \
+          [lindex $pins_args [incr i]]
+      }
+      -min_distance_in_tracks {
+        lappend config_args -io_pin_min_distance_in_tracks
+      }
+      default {
+        utl::warn FLW 25 "PLACE_PINS_ARGS $arg is not used with GPL_PLACE_IOS."
+        if { ![string match -* [lindex $pins_args [expr { $i + 1 }]]] } {
+          incr i
+        }
+      }
+    }
+  }
+  return $config_args
+}
+
 proc find_macros { } {
   set macros ""
 
@@ -178,7 +216,8 @@ proc erase_non_stage_variables { stage_name } {
   # Tcl yaml package can't be imported in the sta/openroad environment:
   #
   # https://github.com/The-OpenROAD-Project/OpenROAD/issues/5875
-  set variables [exec $::env(SCRIPTS_DIR)/non_stage_variables.py $stage_name]
+  set variables [exec -- $::env(PYTHON_EXE) \
+    $::env(SCRIPTS_DIR)/non_stage_variables.py $stage_name]
   foreach var $variables {
     if { [info exists ::env($var)] } {
       unset ::env($var)
@@ -302,7 +341,115 @@ proc find_physical_only_masters { } {
   return $physical_only_masters
 }
 
-proc orfs_write_db { output_file } {
+proc endpoint_slack_file { step } {
+  return $::env(REPORTS_DIR)/${step}_endpoint_slack.json
+}
+
+# The final stage extracts parasitics into 6_final.spef when the platform
+# has OpenRCX rules and the design is detail routed. 6_final.odb is timed
+# with that SPEF; whether a .spef file exists says nothing.
+proc final_extracts_parasitics { } {
+  return [expr {
+    [env_var_exists_and_non_empty RCX_RULES]
+    && !$::env(SKIP_DETAILED_ROUTE)
+  }]
+}
+
+# Load the parasitics that step is timed with and return where they came
+# from: the extracted 6_final.spef when final writes one, else, once the
+# design is placed, what OpenROAD estimates (global routes if there are
+# any, else placement), else none.
+proc orfs_load_parasitics { step } {
+  if { $step == "6_final" && [final_extracts_parasitics] } {
+    log_cmd read_spef $::env(RESULTS_DIR)/6_final.spef
+  } elseif { [grt::design_is_placed] } {
+    log_cmd estimate_parasitics
+  } else {
+    return none
+  }
+  return [est::parasitics_source]
+}
+
+# Write the setup and hold slack of every endpoint at the end of a flow
+# step so they can be compared across steps with
+# flow/util/endpointSlack.py. load_parasitics 0 is for a caller that has
+# just loaded the parasitics itself, e.g. 6_final after extraction.
+proc write_endpoint_slack { step { load_parasitics 1 } } {
+  if { !$::env(REPORT_ENDPOINT_SLACK) || [string match "*-failed" $step] } {
+    return
+  }
+  set filename [endpoint_slack_file $step]
+  puts "Writing endpoint slack to $filename"
+
+  if { $load_parasitics } {
+    set parasitics [orfs_load_parasitics $step]
+  } else {
+    set parasitics [est::parasitics_source]
+  }
+  # Update timing before sta::endpoints: the endpoint set is cached the
+  # first time it is requested and misses gated clock enable checks if the
+  # clock network has not been found yet.
+  sta::find_timing
+
+  set fileId [open $filename w]
+  puts $fileId "{"
+  puts $fileId "\"design\": \"$::env(DESIGN_NAME)\","
+  puts $fileId "\"step\": \"$step\","
+  puts $fileId "\"parasitics\": \"$parasitics\","
+  # Seconds per reported time unit
+  puts $fileId "\"time_unit\": [sta::time_ui_sta 1],"
+  # endpoint: [setup slack, hold slack], null if unconstrained
+  puts $fileId "\"endpoints\": {"
+  set sep ""
+  foreach pin [sta::endpoints] {
+    set name [string map {\\ \\\\ \" \\\"} [get_full_name $pin]]
+    set slacks {}
+    foreach min_max {max min} {
+      set slack [get_property $pin slack_$min_max]
+      if { $slack eq "INF" || $slack eq "-INF" } {
+        set slack null
+      }
+      lappend slacks $slack
+    }
+    puts -nonewline $fileId "$sep\"$name\": \[[join $slacks ,]\]"
+    set sep ",\n"
+  }
+  puts $fileId "\n}"
+  puts $fileId "}"
+  close $fileId
+}
+
+# A step that copies its input .odb leaves the design unchanged, so
+# re-time it if it is loaded, otherwise copy the input step's snapshot.
+proc copy_endpoint_slack { input_file output_file } {
+  if { !$::env(REPORT_ENDPOINT_SLACK) } {
+    return
+  }
+  set step [file rootname [file tail $output_file]]
+  set chip [[ord::get_db] getChip]
+  if { $chip != "NULL" && [$chip getBlock] != "NULL" } {
+    write_endpoint_slack $step
+    return
+  }
+  set input [endpoint_slack_file [file rootname [file tail $input_file]]]
+  if { ![file exists $input] } {
+    return
+  }
+  set fileId [open $input r]
+  set json [read $fileId]
+  close $fileId
+  regsub {"step": "[^"]*"} $json "\"step\": \"$step\"" json
+  set fileId [open [endpoint_slack_file $step] w]
+  puts -nonewline $fileId $json
+  close $fileId
+}
+
+# endpoint_slack 0 is for callers that write the endpoint slack snapshot
+# themselves, e.g. 6_final after parasitic extraction.
+proc orfs_write_db { output_file { endpoint_slack 1 } } {
+  if { $endpoint_slack } {
+    write_endpoint_slack [file rootname [file tail $output_file]]
+  }
   if { !$::env(WRITE_ODB_AND_SDC_EACH_STAGE) } {
     return
   }
@@ -326,6 +473,7 @@ proc orfs_write_sdc { output_file } {
 # mtime with second resolution, which breaks make's timestamp-based
 # up-to-date checks for fast builds.
 proc orfs_copy_db { input_file output_file } {
+  copy_endpoint_slack $input_file $output_file
   if { !$::env(WRITE_ODB_AND_SDC_EACH_STAGE) } {
     return
   }
@@ -371,4 +519,47 @@ proc synth_verilog_files { } {
     }
   }
   return $copies
+}
+
+# Entry of lib_file in the binary liberty (.blib) cache shared by all designs:
+# objects/binary_libs/<platform>/<library>@<size>-<mtime>-<dirhash>.blib, so a
+# changed library gets a new entry and same-named libraries from different
+# directories don't collide. Libraries in the design's directory and those the
+# flow generates are cached per run.
+proc binary_lib_path { lib_file } {
+  set source [file normalize $lib_file]
+  set objects [file join $::env(WORK_HOME) objects]
+  set root [file join $objects binary_libs $::env(PLATFORM)]
+  set run_dirs [list $::env(DESIGN_DIR) $objects [file join $::env(WORK_HOME) results]]
+  foreach dir $run_dirs {
+    if { [string first "[file normalize $dir]/" $source] == 0 } {
+      set root [file join $::env(OBJECTS_DIR) binary_libs]
+      break
+    }
+  }
+  set name [file tail $source]
+  regsub {\.gz$} $name "" name
+  set name [file rootname $name]
+  set dir_hash [format %08x [zlib crc32 [file dirname $source] 0]]
+  return [file join $root "$name@[file size $source]-[file mtime $source]-$dir_hash.blib"]
+}
+
+# Whether this OpenROAD reads blib. An entry missing or written by another
+# version is expected, so its error is not reported.
+proc binary_lib_usable { blib } {
+  suppress_message STA 1900
+  suppress_message STA 1902
+  set usable [expr { ![catch { liberty_binary_info $blib }] }]
+  unsuppress_message STA 1900
+  unsuppress_message STA 1902
+  return $usable
+}
+
+# The cached .blib for lib_file, or lib_file when there is no usable .blib
+proc lib_file_to_read { lib_file } {
+  set blib [binary_lib_path $lib_file]
+  if { [binary_lib_usable $blib] } {
+    return $blib
+  }
+  return $lib_file
 }
