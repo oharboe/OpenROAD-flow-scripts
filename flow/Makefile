@@ -21,9 +21,11 @@
 # DESIGN_CONFIG=./designs/nangate45/ibex/config.mk
 # DESIGN_CONFIG=./designs/nangate45/jpeg/config.mk
 # DESIGN_CONFIG=./designs/nangate45/mempool_group/config.mk
+# DESIGN_CONFIG=./designs/nangate45/picorv32/config.mk
 # DESIGN_CONFIG=./designs/nangate45/swerv/config.mk
 # DESIGN_CONFIG=./designs/nangate45/swerv_wrapper/config.mk
 # DESIGN_CONFIG=./designs/nangate45/tinyRocket/config.mk
+# DESIGN_CONFIG=./designs/nangate45/tpu/config.mk
 
 # DESIGN_CONFIG=./designs/gf12/aes/config.mk
 # DESIGN_CONFIG=./designs/gf12/ariane/config.mk
@@ -60,8 +62,10 @@
 # DESIGN_CONFIG=./designs/asap7/ibex/config.mk
 # DESIGN_CONFIG=./designs/asap7/jpeg/config.mk
 # DESIGN_CONFIG=./designs/asap7/megaboom/config.mk
+# DESIGN_CONFIG=./designs/asap7/picorv32/config.mk
 # DESIGN_CONFIG=./designs/asap7/riscv32i/config.mk
 # DESIGN_CONFIG=./designs/asap7/swerv_wrapper/config.mk
+# DESIGN_CONFIG=./designs/asap7/tpu/config.mk
 # DESIGN_CONFIG=./designs/asap7/uart/config.mk
 
 # DESIGN_CONFIG=./designs/intel16/aes/config.mk
@@ -200,6 +204,7 @@ do-klayout:
 		--template $(KLAYOUT_TECH_FILE) \
 		--output $(OBJECTS_DIR)/klayout.lyt \
 		--lef-files $(OBJECTS_DIR)/klayout_tech.lef $(SC_LEF) $(ADDITIONAL_LEFS) \
+		  $(if $(filter 1,$(AUTO_MEMORIES)),$(wildcard $(RESULTS_DIR)/memories/*.lef)) \
 		--map-files $(wildcard $(FLOW_HOME)/platforms/$(PLATFORM)/*map)
 
 $(OBJECTS_DIR)/klayout_wrap.lyt: $(KLAYOUT_TECH_FILE) $(OBJECTS_DIR)/klayout_tech.lef
@@ -241,26 +246,11 @@ synth-report: synth
 do-synth-report:
 	$(RUN_CMD) --log $(abspath $(LOG_DIR)/1_2_yosys_metrics.log) --tee -- $(OPENROAD_CMD) $(SCRIPTS_DIR)/synth_metrics.tcl
 
-.PHONY: memory
-memory:
-	if [ -f $(RESULTS_DIR)/mem_hierarchical.json ]; then \
-		$(PYTHON_EXE) $(SCRIPTS_DIR)/mem_dump.py $(RESULTS_DIR)/mem_hierarchical.json; \
-	fi
-	$(PYTHON_EXE) $(SCRIPTS_DIR)/mem_dump.py $(RESULTS_DIR)/mem.json
-
 # ==============================================================================
 
 
 # Run Synthesis using yosys
 #-------------------------------------------------------------------------------
-
-$(SDC_FILE_CLOCK_PERIOD): $(SDC_FILE)
-	$(UNSET_AND_MAKE) do-sdc-clock-period
-
-.PHONY: do-sdc-clock-period
-do-sdc-clock-period:
-	mkdir -p $(dir $(SDC_FILE_CLOCK_PERIOD))
-	echo $(ABC_CLOCK_PERIOD_IN_PS) > $(SDC_FILE_CLOCK_PERIOD)
 
 .PHONY: yosys-dependencies
 yosys-dependencies: $(YOSYS_DEPENDENCIES)
@@ -278,19 +268,54 @@ do-auto-memories: $(RESULTS_DIR)/memories_inferred.json
 	mkdir -p $(RESULTS_DIR)
 	$(PYTHON_EXE) $(SCRIPTS_DIR)/memories/gen_memories.py \
 	  --platform $(PLATFORM) \
+	  --top $(DESIGN_NAME) \
 	  --yosys-json $(RESULTS_DIR)/memories_inferred.json \
 	  --out-dir $(RESULTS_DIR)/memories \
 	  --json $(RESULTS_DIR)/memories.json \
-	  $(foreach file,$(VERILOG_FILES),--verilog $(file)) \
-	  $(foreach file,$(ADDITIONAL_MEMORIES),--memories $(file))
+	  $(foreach file,$(ADDITIONAL_MEMORIES),--memories $(file)) \
+	  $(foreach file,$(AUTO_MEMORIES_REGFILES),--regfile-spec $(file)) \
+	  $(foreach m,$(AUTO_MEMORIES_MACRO_PLACE),--macro-place $(m)) \
+	  $(if $(AUTO_MEMORIES_REGFILES),--openroad $(OPENROAD_EXE)) \
+	  $(foreach file,$(TECH_LEF) $(SC_LEF),--lef $(file))
 
 $(RESULTS_DIR)/memories.json: $(RESULTS_DIR)/memories_inferred.json $(ADDITIONAL_MEMORIES) \
-    $(wildcard $(SCRIPTS_DIR)/memories/*.py)
+    $(AUTO_MEMORIES_REGFILES) $(wildcard $(SCRIPTS_DIR)/memories/*.py)
 	$(UNSET_AND_MAKE) do-auto-memories
 
 yosys-dependencies: $(RESULTS_DIR)/memories.json
 $(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil: $(RESULTS_DIR)/memories.json
+# The generated LEFs are part of the KLayout technology the GDS merge
+# reads the final DEF with.
+$(OBJECTS_DIR)/klayout.lyt: $(RESULTS_DIR)/memories.json
 endif
+
+# OpenROAD stages read binary liberty (.blib) files from a cache shared by
+# all designs in $(WORK_HOME)/objects/binary_libs, see
+# scripts/write_binary_libs.tcl. Yosys reads the text libraries.
+.PHONY: binary-libs
+binary-libs:
+	$(UNSET_AND_MAKE) do-binary-libs
+
+.PHONY: do-binary-libs
+do-binary-libs:
+	@mkdir -p $(LOG_DIR)
+	$(RUN_CMD) --log $(abspath $(LOG_DIR)/write_binary_libs.tmp.log) --tee -- $(OPENROAD_CMD) $(SCRIPTS_DIR)/write_binary_libs.tcl
+	mv $(LOG_DIR)/write_binary_libs.tmp.log $(LOG_DIR)/write_binary_libs.log
+
+# do-binary-libs renames its log into place only when it succeeds, so a
+# failed conversion runs again. clean_all and clean_binary_libs delete the
+# log with the cache it records, so the next make fills the cache again.
+$(LOG_DIR)/write_binary_libs.log: $(LIB_FILES) \
+  $(foreach corner,$(shell echo $(CORNERS) | tr '[:lower:]' '[:upper:]'),$($(corner)_LIB_FILES))
+	$(UNSET_AND_MAKE) do-binary-libs
+
+# Order-only, so converting never reruns the flow.
+$(RESULTS_DIR)/1_synth.odb: | $(LOG_DIR)/write_binary_libs.log
+
+.PHONY: clean_binary_libs
+clean_binary_libs:
+	rm -rf $(WORK_HOME)/objects/binary_libs
+	rm -f $(LOG_DIR)/write_binary_libs.log
 
 .PHONY: do-yosys
 do-yosys: yosys-dependencies
@@ -316,7 +341,6 @@ clean_synth:
 	rm -f $(REPORTS_DIR)/synth_*
 	rm -f $(LOG_DIR)/1_*
 	rm -f $(SYNTH_STATS)
-	rm -f $(SDC_FILE_CLOCK_PERIOD)
 
 # ==============================================================================
 #  _____ _     ___   ___  ____  ____  _        _    _   _
@@ -404,7 +428,7 @@ $(eval $(call OPEN_GUI_SHORTCUT,$(1),$(1).odb))
 endif
 
 .PHONY: do-$(1)
-do-$(1): $(OBJECTS_DIR)/copyright.txt
+do-$(1): $(DO_STEP_DEPS_$(1)) $(OBJECTS_DIR)/copyright.txt
 	$(SCRIPTS_DIR)/flow.sh $(1) $(3)
 endef
 
@@ -446,6 +470,26 @@ $(eval $(call do-step,1_synth,$(RESULTS_DIR)/1_2_yosys.v $(RESULTS_DIR)/1_2_yosy
 endif
 
 $(RESULTS_DIR)/1_synth.sdc: $(RESULTS_DIR)/1_synth.odb
+
+FORMAL_CHECK_DEPS =
+ifneq ($(filter 1,$(LEC_CHECK) $(SEC_CHECK)),)
+FORMAL_CHECK_DEPS += $(RESULTS_DIR)/1_synth_lec.v
+endif
+
+.PHONY: check-kepler-formal
+check-kepler-formal:
+	@if [ ! -x "$(KEPLER_FORMAL_EXE)" ]; then \
+		echo "Error: Kepler Formal not found. Install Kepler Formal or set KEPLER_FORMAL_EXE."; \
+		echo "Hint: Kepler Formal is needed when LEC_CHECK=1 or SEC_CHECK=1."; \
+		exit 1; \
+	fi
+
+$(RESULTS_DIR)/1_synth_lec.v: $(RESULTS_DIR)/1_synth.odb $(RESULTS_DIR)/1_synth.sdc
+	$(UNSET_AND_MAKE) do-1_synth
+
+ifneq ($(filter 1,$(LEC_CHECK) $(SEC_CHECK)),)
+$(RESULTS_DIR)/1_synth_lec.v: | check-kepler-formal
+endif
 
 $(eval $(call do-step,2_1_floorplan,$(RESULTS_DIR)/1_synth.odb $(RESULTS_DIR)/1_synth.sdc $(TECH_LEF) $(SC_LEF) $(ADDITIONAL_LEFS) $(FOOTPRINT) $(SIG_MAP_FILE) $(FOOTPRINT_TCL) $(LIB_FILES) $(IO_CONSTRAINTS),floorplan))
 
@@ -545,7 +589,15 @@ cts: $(RESULTS_DIR)/4_cts.odb \
 
 # Run TritonCTS
 # ------------------------------------------------------------------------------
+ifeq ($(LEC_CHECK),1)
+DO_STEP_DEPS_4_1_cts += check-kepler-formal
+endif
+
 $(eval $(call do-step,4_1_cts,$(RESULTS_DIR)/3_place.odb $(RESULTS_DIR)/3_place.sdc,cts))
+
+ifeq ($(LEC_CHECK),1)
+$(RESULTS_DIR)/4_1_cts.odb: | check-kepler-formal
+endif
 
 $(RESULTS_DIR)/4_cts.sdc: $(RESULTS_DIR)/4_cts.odb
 
@@ -651,13 +703,25 @@ $(eval $(call do-step,6_1_fill,$(RESULTS_DIR)/5_route.odb $(RESULTS_DIR)/5_route
 
 $(eval $(call do-copy,6_1_fill,5_route.sdc,,.sdc))
 
-$(eval $(call do-step,6_report,$(RESULTS_DIR)/6_1_fill.odb $(RESULTS_DIR)/6_1_fill.sdc,final_report,.log,$(LOG_DIR)))
+ifneq ($(filter 1,$(LEC_CHECK) $(SEC_CHECK)),)
+DO_STEP_DEPS_6_report += check-kepler-formal
+endif
+
+$(eval $(call do-step,6_report,$(RESULTS_DIR)/6_1_fill.odb $(RESULTS_DIR)/6_1_fill.sdc $(FORMAL_CHECK_DEPS),final_report,.log,$(LOG_DIR)))
+
+ifneq ($(filter 1,$(LEC_CHECK) $(SEC_CHECK)),)
+$(LOG_DIR)/6_report.log: | check-kepler-formal
+endif
 
 # final_report writes 6_final.sdc alongside 6_final.odb (constraints are
 # unchanged during finishing), mirroring how synth writes 1_synth.sdc.
 $(RESULTS_DIR)/6_final.sdc: $(LOG_DIR)/6_report.log
 
 $(RESULTS_DIR)/6_final.def: $(LOG_DIR)/6_report.log
+
+# Written only when final extracts parasitics (RCX_RULES set, detailed
+# route not skipped); generate_abstract reads it in that case.
+$(RESULTS_DIR)/6_final.spef: $(LOG_DIR)/6_report.log
 
 # The final results are called 6_final.*, so it is convenient when scripting
 # to have the names of the artifacts match the name of the target
@@ -672,7 +736,7 @@ do-finish:
 	$(UNSET_AND_MAKE) do-6_1_fill do-6_1_fill.sdc do-6_report elapsed
 
 .PHONY: generate_abstract
-generate_abstract: $(RESULTS_DIR)/6_final.gds $(RESULTS_DIR)/6_final.def  $(RESULTS_DIR)/6_final.v $(RESULTS_DIR)/6_final.sdc
+generate_abstract: $(RESULTS_DIR)/6_final.gds $(RESULTS_DIR)/6_final.def  $(RESULTS_DIR)/6_final.v $(RESULTS_DIR)/6_final.sdc $(RESULTS_DIR)/6_final.spef
 	$(UNSET_AND_MAKE) do-generate_abstract
 
 # Set ABSTRACT_SOURCE if you want to create an abstract from another stage than 6_final.
@@ -766,6 +830,7 @@ ifneq ($(KLAYOUT_LVS_FILE),)
 	$(RUN_CMD) --log $(abspath $(LOG_DIR)/6_lvs.log) --tee -- \
 	        $(SCRIPTS_DIR)/klayout.sh -b -rd in_gds="$<" \
 	        -rd cdl_file=$(abspath $(OBJECTS_DIR)/6_final_concat.cdl) \
+	        -rd top_cell="$(DESIGN_NAME)" \
 	        -rd report_file=$(abspath $@) \
 	        -r $(KLAYOUT_LVS_FILE)
 else
@@ -816,6 +881,7 @@ clean:
 .PHONY: clean_all
 clean_all: clean_synth clean_floorplan clean_place clean_cts clean_route clean_finish clean_metadata clean_abstract
 	rm -rf $(OBJECTS_DIR)
+	rm -f $(LOG_DIR)/write_binary_libs*.log
 
 .PHONY: nuke
 nuke: clean_test clean_issues
