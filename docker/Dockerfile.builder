@@ -30,6 +30,7 @@ FROM orfs-builder-base AS orfs-tools-builder
 # Exclude install so a local build's output (e.g. tools/install/OpenROAD)
 # cannot leak into the image; the build below starts from an empty install.
 COPY --link --exclude=OpenROAD --exclude=AutoTuner --exclude=install tools tools
+COPY --link etc/kepler-formal etc/kepler-formal
 ARG numThreads=$(nproc)
 ARG verificPath=""
 
@@ -109,6 +110,7 @@ COPY --link flow/util flow/util
 COPY --link flow/scripts flow/scripts
 COPY --link flow/designs flow/designs
 COPY --link tools/AutoTuner tools/AutoTuner
+COPY --link tools/FakeRAM2.0 tools/FakeRAM2.0
 
 COPY --link --from=orfs-openroad-builder /OpenROAD-flow-scripts/tools/install tools/install
 COPY --link \
