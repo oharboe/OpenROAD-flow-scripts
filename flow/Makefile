@@ -205,7 +205,7 @@ do-klayout:
 		--output $(OBJECTS_DIR)/klayout.lyt \
 		--lef-files $(OBJECTS_DIR)/klayout_tech.lef $(SC_LEF) $(ADDITIONAL_LEFS) \
 		--map-files $(wildcard $(FLOW_HOME)/platforms/$(PLATFORM)/*map) \
-		$(if $(filter 1,$(AUTO_MEMORIES)),--blackboxes $(RESULTS_DIR)/memories/blackboxes.txt)
+		$(if $(filter 1,$(AUTO_MEMORIES)),--blackboxes $(AUTO_MEMORIES_DIR)/blackboxes.txt)
 
 $(OBJECTS_DIR)/klayout_wrap.lyt: $(KLAYOUT_TECH_FILE) $(OBJECTS_DIR)/klayout_tech.lef
 	$(UNSET_AND_MAKE) do-klayout_wrap
@@ -270,7 +270,7 @@ do-auto-memories: $(RESULTS_DIR)/memories_inferred.json
 	  --platform $(PLATFORM) \
 	  --top $(DESIGN_NAME) \
 	  --yosys-json $(RESULTS_DIR)/memories_inferred.json \
-	  --out-dir $(RESULTS_DIR)/memories \
+	  --out-dir $(AUTO_MEMORIES_DIR) \
 	  --json $(RESULTS_DIR)/memories.json \
 	  $(foreach file,$(ADDITIONAL_MEMORIES),--memories $(file)) \
 	  $(foreach file,$(AUTO_MEMORIES_REGFILES),--regfile-spec $(file)) \
@@ -285,8 +285,13 @@ $(RESULTS_DIR)/memories.json: $(RESULTS_DIR)/memories_inferred.json $(ADDITIONAL
 yosys-dependencies: $(RESULTS_DIR)/memories.json
 $(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil: $(RESULTS_DIR)/memories.json
 # The generated LEFs are part of the KLayout technology the GDS merge
-# reads the final DEF with.
+# reads the final DEF with. Memories another variant generated
+# (AUTO_MEMORIES_DIR set) are only read here, never regenerated.
+ifeq ($(AUTO_MEMORIES_DIR),$(RESULTS_DIR)/memories)
 $(OBJECTS_DIR)/klayout.lyt: $(RESULTS_DIR)/memories.json
+else
+$(OBJECTS_DIR)/klayout.lyt: $(AUTO_MEMORIES_DIR)/blackboxes.txt
+endif
 endif
 
 # OpenROAD stages read binary liberty (.blib) files from a cache shared by
@@ -337,7 +342,7 @@ $(RESULTS_DIR)/1_2_yosys.v: $(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil
 .PHONY: clean_synth
 clean_synth:
 	rm -f $(RESULTS_DIR)/1_* $(RESULTS_DIR)/mem*.json
-	rm -rf $(RESULTS_DIR)/memories
+	rm -rf $(AUTO_MEMORIES_DIR)
 	rm -f $(REPORTS_DIR)/synth_*
 	rm -f $(LOG_DIR)/1_*
 	rm -f $(SYNTH_STATS)
