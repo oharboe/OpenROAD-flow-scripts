@@ -13,7 +13,8 @@ proc load_stage_input { design_file } {
   if { $::env(INPUT_RESULTS_DIR) ne $::env(RESULTS_DIR) } {
     if {
       $::env(AUTO_MEMORIES)
-      && $::env(AUTO_MEMORIES_DIR) eq "$::env(RESULTS_DIR)/memories"
+      && [file normalize $::env(AUTO_MEMORIES_DIR)]
+      eq [file normalize $::env(RESULTS_DIR)/memories]
     } {
       error "AUTO_MEMORIES=1 reads the memories from AUTO_MEMORIES_DIR, this\
         variant's, $::env(FLOW_VARIANT), and FLOW_INPUT_VARIANT=$::env(FLOW_INPUT_VARIANT)\

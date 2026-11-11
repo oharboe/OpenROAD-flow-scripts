@@ -258,6 +258,11 @@ yosys-dependencies: $(YOSYS_DEPENDENCIES)
 # AUTO_MEMORIES: detect memories in the RTL pre-synthesis and generate
 # .lib/.lef macro views for them. Experimental; see
 # docs/user/AutoMemories.md.
+#
+# Non-empty when AUTO_MEMORIES_DIR is this variant's own directory, the
+# default, however it is spelled; empty when it names another variant's.
+AUTO_MEMORIES_DIR_IS_OWN = $(filter $(abspath $(RESULTS_DIR)/memories),$(abspath $(AUTO_MEMORIES_DIR)))
+
 ifeq ($(AUTO_MEMORIES),1)
 $(RESULTS_DIR)/memories_inferred.json: $(VERILOG_FILES) $(SCRIPTS_DIR)/memories/extract_memories.tcl
 	mkdir -p $(RESULTS_DIR) $(LOG_DIR)
@@ -287,7 +292,7 @@ $(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil: $(RESULTS_DIR)/memories.json
 # The generated LEFs are part of the KLayout technology the GDS merge
 # reads the final DEF with. Memories another variant generated
 # (AUTO_MEMORIES_DIR set) are only read here, never regenerated.
-ifeq ($(AUTO_MEMORIES_DIR),$(RESULTS_DIR)/memories)
+ifneq ($(AUTO_MEMORIES_DIR_IS_OWN),)
 $(OBJECTS_DIR)/klayout.lyt: $(RESULTS_DIR)/memories.json
 else
 $(OBJECTS_DIR)/klayout.lyt: $(AUTO_MEMORIES_DIR)/blackboxes.txt
@@ -342,7 +347,10 @@ $(RESULTS_DIR)/1_2_yosys.v: $(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil
 .PHONY: clean_synth
 clean_synth:
 	rm -f $(RESULTS_DIR)/1_* $(RESULTS_DIR)/mem*.json
+	# Another variant's memories, read in place, are not this variant's to remove.
+ifneq ($(AUTO_MEMORIES_DIR_IS_OWN),)
 	rm -rf $(AUTO_MEMORIES_DIR)
+endif
 	rm -f $(REPORTS_DIR)/synth_*
 	rm -f $(LOG_DIR)/1_*
 	rm -f $(SYNTH_STATS)
