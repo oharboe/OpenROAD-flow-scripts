@@ -61,6 +61,12 @@ class Credentials:
 
 BUILD_TIME_FORMAT = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
 
+REQUESTER_ENV = ("UPLOAD_BUILD_USER_EMAIL", "UPLOAD_CHANGE_AUTHOR_EMAIL")
+
+# Large enough to push the pipeline payload over the 8 MB cap, so the script
+# falls back to one v1 message per design.
+OVERSIZED_METRICS = {"blob": "x" * (9 * 1024 * 1024)}
+
 
 class TestUploadMetadata(unittest.TestCase):
     def setUp(self):
@@ -96,8 +102,28 @@ class TestUploadMetadata(unittest.TestCase):
         with open(os.path.join(report_dir, "metadata.json"), "w") as f:
             json.dump(metrics or {"finish:area": 1.0}, f)
 
-    def run_script(self, *extra, fail=False, tz=None):
+    def add_flow_status(self, platform, design, status, variant="base", logs=None):
+        """Record how a design's flow run ended, as the CI job does, with stage
+        logs given as {file name: content}."""
+        report_dir = os.path.join(self.flow, "reports", platform, design, variant)
+        os.makedirs(report_dir, exist_ok=True)
+        with open(os.path.join(report_dir, "flow-status.json"), "w") as f:
+            f.write(status if isinstance(status, str) else json.dumps(status))
+        log_dir = os.path.join(self.flow, "logs", platform, design, variant)
+        os.makedirs(log_dir, exist_ok=True)
+        for name, content in (logs or {}).items():
+            with open(os.path.join(log_dir, name), "w") as f:
+                f.write(content)
+
+    def designs(self, messages):
+        """The pipeline payload's design records, by design name."""
+        return {d["design"]: d for d in messages[0]["data"]["designs"]}
+
+    def run_script(self, *extra, fail=False, tz=None, extra_env=None):
         env = dict(os.environ)
+        for name in REQUESTER_ENV:
+            env.pop(name, None)
+        env.update(extra_env or {})
         if tz:
             env["TZ"] = tz
         env["PYTHONPATH"] = self.stubs
@@ -343,6 +369,178 @@ class TestUploadMetadata(unittest.TestCase):
         self.assertEqual(payload["designs"], [])
         self.assertEqual(payload["jenkins_library"], {"ref": "v1.0.0"})
 
+    def test_pipeline_payload_without_requester_is_unchanged(self):
+        self.add_design("nangate45", "gcd", metrics={"finish:area": 5.0})
+        result, messages = self.run_script("--jobName", "ORFS")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = messages[0]["data"]
+        self.assertRegex(payload.pop("build_time"), BUILD_TIME_FORMAT)
+        self.assertEqual(
+            payload,
+            {
+                "payload_schema_version": 3,
+                "jenkins_env": "public",
+                "build_id": "42",
+                "branch_name": "master",
+                "pipeline_id": "jenkins-ORFS-master-42",
+                "change_branch": None,
+                "commit_sha": "abc123",
+                "jenkins_url": "http://jenkins/job/ORFS/42/",
+                "job_name": "ORFS",
+                "designs": [
+                    {
+                        "platform": "nangate45",
+                        "design": "gcd",
+                        "variant": "base",
+                        "metrics": {"finish__area": 5.0},
+                    }
+                ],
+            },
+        )
+
+    def test_v1_message_without_requester_is_unchanged(self):
+        self.add_design("nangate45", "gcd", metrics=OVERSIZED_METRICS)
+        result, messages = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(messages), 1)
+        payload = messages[0]["data"]
+        self.assertEqual(payload.pop("blob"), OVERSIZED_METRICS["blob"])
+        self.assertEqual(
+            payload,
+            {
+                "build_id": "42",
+                "branch_name": "master",
+                "pipeline_id": "jenkins-ORFS-master-42",
+                "change_branch": None,
+                "commit_sha": "abc123",
+                "jenkins_url": "http://jenkins/job/ORFS/42/",
+                "jenkins_env": "public",
+            },
+        )
+
+    def test_both_requester_flags_reach_pipeline_payload(self):
+        self.add_design("nangate45", "gcd")
+        result, messages = self.run_script(
+            "--buildUserEmail",
+            " ada@example.com ",
+            "--changeAuthorEmail",
+            "bob@example.com",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = messages[0]["data"]
+        self.assertEqual(payload["build_user_email"], "ada@example.com")
+        self.assertEqual(payload["change_author_email"], "bob@example.com")
+        self.assertEqual(payload["payload_schema_version"], 2)
+
+    def test_both_requester_flags_reach_v1_messages(self):
+        self.add_design("nangate45", "gcd", metrics=OVERSIZED_METRICS)
+        result, messages = self.run_script(
+            "--buildUserEmail",
+            "ada@example.com",
+            "--changeAuthorEmail",
+            "bob@example.com",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = messages[0]["data"]
+        self.assertEqual(payload["build_user_email"], "ada@example.com")
+        self.assertEqual(payload["change_author_email"], "bob@example.com")
+
+    def test_blank_requester_flag_is_omitted(self):
+        self.add_design("nangate45", "gcd")
+        result, messages = self.run_script(
+            "--buildUserEmail", "   ", "--changeAuthorEmail", "bob@example.com"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = messages[0]["data"]
+        self.assertNotIn("build_user_email", payload)
+        self.assertEqual(payload["change_author_email"], "bob@example.com")
+
+    def test_blank_requester_flag_is_omitted_from_v1_messages(self):
+        self.add_design("nangate45", "gcd", metrics=OVERSIZED_METRICS)
+        result, messages = self.run_script(
+            "--buildUserEmail", "ada@example.com", "--changeAuthorEmail", ""
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = messages[0]["data"]
+        self.assertEqual(payload["build_user_email"], "ada@example.com")
+        self.assertNotIn("change_author_email", payload)
+
+    def test_requester_without_at_sign_is_dropped(self):
+        self.add_design("nangate45", "gcd")
+        result, messages = self.run_script(
+            "--buildUserEmail", "null", "--changeAuthorEmail", "None"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = messages[0]["data"]
+        self.assertNotIn("build_user_email", payload)
+        self.assertNotIn("change_author_email", payload)
+        self.assertIn("[WARN] Not sending --buildUserEmail: 'null'", result.stdout)
+        self.assertIn("[WARN] Not sending --changeAuthorEmail: 'None'", result.stdout)
+
+    def test_v1_fallback_warns_about_requester_once(self):
+        self.add_design("nangate45", "gcd", metrics=OVERSIZED_METRICS)
+        result, messages = self.run_script("--buildUserEmail", "null")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("build_user_email", messages[0]["data"])
+        self.assertEqual(result.stdout.count("Not sending --buildUserEmail"), 1)
+
+    def test_requester_is_read_from_environment(self):
+        self.add_design("nangate45", "gcd")
+        result, messages = self.run_script(
+            extra_env={
+                "UPLOAD_BUILD_USER_EMAIL": "ada@example.com",
+                "UPLOAD_CHANGE_AUTHOR_EMAIL": " bob@example.com ",
+            }
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = messages[0]["data"]
+        self.assertEqual(payload["build_user_email"], "ada@example.com")
+        self.assertEqual(payload["change_author_email"], "bob@example.com")
+
+    def test_requester_flag_overrides_environment(self):
+        self.add_design("nangate45", "gcd")
+        result, messages = self.run_script(
+            "--buildUserEmail",
+            "ada@example.com",
+            extra_env={"UPLOAD_BUILD_USER_EMAIL": "other@example.com"},
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(messages[0]["data"]["build_user_email"], "ada@example.com")
+
+    def test_empty_requester_flag_suppresses_environment(self):
+        self.add_design("nangate45", "gcd")
+        result, messages = self.run_script(
+            "--buildUserEmail",
+            "",
+            extra_env={"UPLOAD_BUILD_USER_EMAIL": "ada@example.com"},
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("build_user_email", messages[0]["data"])
+
+    def test_environment_requester_is_validated(self):
+        self.add_design("nangate45", "gcd")
+        result, messages = self.run_script(
+            extra_env={"UPLOAD_BUILD_USER_EMAIL": "null"}
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("build_user_email", messages[0]["data"])
+        self.assertIn("[WARN] Not sending --buildUserEmail: 'null'", result.stdout)
+
+    def test_environment_requester_reaches_v1_messages(self):
+        self.add_design("nangate45", "gcd", metrics=OVERSIZED_METRICS)
+        result, messages = self.run_script(
+            extra_env={"UPLOAD_CHANGE_AUTHOR_EMAIL": "bob@example.com"}
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(messages[0]["data"]["change_author_email"], "bob@example.com")
+
+    def test_requester_keys_win_over_same_named_v1_metric(self):
+        metrics = dict(OVERSIZED_METRICS, build_user_email="metric")
+        self.add_design("nangate45", "gcd", metrics=metrics)
+        result, messages = self.run_script("--buildUserEmail", "ada@example.com")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(messages[0]["data"]["build_user_email"], "ada@example.com")
+
     def test_no_publisher_publishes_nothing(self):
         env = dict(os.environ)
         env["PYTHONPATH"] = self.stubs
@@ -355,6 +553,133 @@ class TestUploadMetadata(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(os.path.exists(self.out))
+
+    def test_timed_out_design_without_metrics_reports_its_outcome(self):
+        self.add_design("nangate45", "gcd")
+        self.add_flow_status(
+            "nangate45",
+            "ibex",
+            {
+                "exit_code": 124,
+                "timed_out": True,
+                "elapsed_minutes": 240.2,
+                "limit_minutes": 240,
+            },
+            logs={"3_3_place_gp.log": "placing\n", "5_1_grt.log": "routing\n"},
+        )
+        result, messages = self.run_script("--jobName", "ORFS")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        designs = self.designs(messages)
+        self.assertEqual(
+            designs["ibex"],
+            {
+                "platform": "nangate45",
+                "design": "ibex",
+                "variant": "base",
+                "outcome": {
+                    "status": "timeout",
+                    "stage": "grt",
+                    "elapsed_minutes": 240.2,
+                    "limit_minutes": 240,
+                },
+            },
+        )
+        self.assertNotIn("outcome", designs["gcd"])
+        self.assertIn("reporting its timeout outcome only", result.stdout)
+
+    def test_failed_design_reports_stage_and_first_error_line(self):
+        self.add_flow_status(
+            "asap7",
+            "aes",
+            {"exit_code": 2, "timed_out": False},
+            logs={
+                "4_1_cts.log": "[ERROR CTS-0001] not this one\n",
+                "5_1_grt.log": "info\n[ERROR GRT-0116] Global routing failed.\n"
+                "[ERROR GRT-0001] later\n",
+            },
+        )
+        _, messages = self.run_script()
+        outcome = self.designs(messages)["aes"]["outcome"]
+        self.assertEqual(outcome["status"], "error")
+        self.assertEqual(outcome["stage"], "grt")
+        self.assertEqual(outcome["message"], "[ERROR GRT-0116] Global routing failed.")
+
+    def test_yosys_error_line_is_reported(self):
+        self.add_flow_status(
+            "asap7",
+            "aes",
+            {"exit_code": 2},
+            logs={"1_2_yosys.log": "ERROR: Module `foo' referenced but not found.\n"},
+        )
+        _, messages = self.run_script()
+        outcome = self.designs(messages)["aes"]["outcome"]
+        self.assertEqual((outcome["status"], outcome["stage"]), ("error", "synth"))
+        self.assertEqual(
+            outcome["message"], "ERROR: Module `foo' referenced but not found."
+        )
+
+    def test_signal_in_last_stage_log_is_a_crash(self):
+        self.add_flow_status(
+            "sky130hd",
+            "jpeg",
+            {"exit_code": 2},
+            logs={"3_3_place_gp.log": "Signal 11 received\nStack trace:\n"},
+        )
+        _, messages = self.run_script()
+        outcome = self.designs(messages)["jpeg"]["outcome"]
+        self.assertEqual((outcome["status"], outcome["stage"]), ("crash", "place"))
+        self.assertNotIn("message", outcome)
+
+    def test_passing_design_keeps_its_metrics_and_reports_passed(self):
+        self.add_design("nangate45", "gcd", metrics={"finish:area": 5.0})
+        self.add_flow_status(
+            "nangate45", "gcd", {"exit_code": 0, "elapsed_minutes": 3.5}
+        )
+        _, messages = self.run_script()
+        record = self.designs(messages)["gcd"]
+        self.assertEqual(record["metrics"], {"finish__area": 5.0})
+        self.assertEqual(
+            record["outcome"], {"status": "passed", "elapsed_minutes": 3.5}
+        )
+
+    def test_long_error_line_is_truncated(self):
+        self.add_flow_status(
+            "asap7",
+            "aes",
+            {"exit_code": 2},
+            logs={"5_2_route.log": "[ERROR DRT-0001] " + "x" * 2000 + "\n"},
+        )
+        _, messages = self.run_script()
+        outcome = self.designs(messages)["aes"]["outcome"]
+        self.assertEqual(outcome["stage"], "route")
+        self.assertEqual(len(outcome["message"]), 1024)
+
+    def test_unreadable_status_without_metrics_skips_the_design(self):
+        self.add_design("nangate45", "gcd")
+        self.add_flow_status("nangate45", "ibex", "not json")
+        self.add_flow_status("nangate45", "jpeg", {"timed_out": False})
+        result, messages = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(set(self.designs(messages)), {"gcd"})
+        self.assertIn("Reporting no outcome", result.stdout)
+        self.assertIn("[WARN] No data file for nangate45 ibex base.", result.stdout)
+
+    def test_outcome_only_design_names_itself_on_the_v1_fallback(self):
+        self.add_design("nangate45", "gcd", metrics=OVERSIZED_METRICS)
+        self.add_flow_status(
+            "nangate45",
+            "ibex",
+            {"exit_code": 124, "timed_out": True, "limit_minutes": 60},
+        )
+        result, messages = self.run_script("--buildTime", "2026-10-05 12:34")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        by_design = {m["data"].get("run__flow__design"): m["data"] for m in messages}
+        ibex = by_design["ibex"]
+        self.assertEqual(ibex["run__flow__platform"], "nangate45")
+        self.assertEqual(ibex["run__flow__variant"], "base")
+        self.assertEqual(ibex["run__flow__generate_date"], "2026-10-05 12:34")
+        self.assertEqual(ibex["outcome"], {"status": "timeout", "limit_minutes": 60})
+        self.assertNotIn("outcome", by_design.get(None, {}))
 
 
 if __name__ == "__main__":
