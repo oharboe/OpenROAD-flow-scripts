@@ -1,0 +1,964 @@
+#!/usr/bin/env python3
+"""
+Checks flow metrics against the QoR dashboard's rules
+(https://dashboard.precisioninno.com).
+
+The check POSTs a run's numeric metrics from metadata.json to the dashboard,
+which compares them against a real baseline build -- the master build at the
+run's merge base, by default -- using the thresholds it stores in
+rule_configs. This is the QoR gate behind `make metadata`. Rule tolerances live in the dashboard, not in
+this repository, and the baseline moves with master, so a merged change
+becomes the new baseline without a file update.
+
+Two modes:
+
+    # One run, as `make metadata-check` calls it. --platform and --design name
+    # the run for the dashboard; --variant defaults to base.
+    ./util/checkQorMetrics.py --metadata reports/asap7/gcd/base/metadata.json \
+        -p asap7 -d gcd
+
+    # Sweep every reports/<platform>/<design>/<variant>/metadata.json.
+    export DASHBOARD_API_KEY=plt_...       # optional; needed for private platforms
+    ./util/checkQorMetrics.py
+
+Each run is checked as the commit metadata.json records (--commit overrides
+it). The dashboard searches its default baseline pipelines in order and takes
+a master build that has the design: the one at the commit's merge base with
+master. A commit on master is its own merge base, so a master run is compared
+against that commit's own build. The dashboard finds the merge base through
+GitHub, so for a commit that no remote branch here contains, the script
+computes it locally against --merge-base (origin/master) and pins the
+baseline to it. Without a merge base build, or without a commit, the run is
+compared against the latest master build, which may be newer than the
+commit's base; the report warns when that happens.
+
+--job-name (DASHBOARD_JOB_NAME) checks as a build of that pipeline instead, with
+its CI rules for the branch checked out here (--branch overrides it): the
+previous build on a trunk branch, the merge base on any other branch. CI
+passes --branch and --commit (or DASHBOARD_BRANCH and DASHBOARD_COMMIT), since
+its checkout has no branch. A local run of a private platform does not need it:
+DASHBOARD_API_KEY alone lets the default pipelines resolve it.
+
+Exit status: 1 when the dashboard reports a failed rule for any checked run,
+or when a metadata.json is missing, malformed, or holds no numeric metric.
+0 otherwise. A run the dashboard could not judge -- no baseline, nothing
+evaluated, or the service unreachable -- is reported as a warning and does not
+fail the check: the check did not run, which is not the same as failing it.
+--strict turns those into exit 2 (inconclusive) and 3 (unreachable) for a CI
+caller that wants to tell them apart. The last line of the report is
+`QoR check: PASS`, `FAIL`, `INCONCLUSIVE`, or `ERROR`.
+"""
+
+import argparse
+import concurrent.futures
+import functools
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+# Run from flow/ the way the other report scripts do (genReport.py,
+# genReportTable.py, uploadMetadata.py), so the walk root below is theirs.
+# A path the caller passed on the command line is relative to where the
+# caller was, not to flow/, so keep that directory to resolve it.
+INVOCATION_DIR = os.getcwd()
+os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+REPORTS_FOLDER = "reports"
+METADATA_FILENAME = "metadata.json"
+LOG_FILENAME = f"{REPORTS_FOLDER}/inline-check.log"
+
+SKIPPED_PLATFORMS = ["sky130hd_fakestack", "src"]
+SKIPPED_FLOW_VARIANT_KEYWORDS = ["test", "tune"]
+
+API_URL = "https://dashboard.precisioninno.com/api"
+BETA_API_URL = "https://beta.dashboard.precisioninno.com/api"
+
+CHECK_PATH = "/compare/check/inline"
+REQUEST_TIMEOUT = 60
+
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 1.0
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+# metadata.json records the ORFS commit, but genMetrics.py writes the strings
+# "git not on PATH" / "not a git repo" / "N/A" there when it cannot resolve one.
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+COMMIT_KEY = "run__flow__scripts_commit"
+
+DEFAULT_MERGE_BASE_REF = "origin/master"
+
+# NAME_W must match the first field width in ROW_FMT.
+NAME_W = 46
+ROW_FMT = "| {:46} | {:>12} | {:>12} | {:>12} | {:>7} |"
+BANNER = "-" * 79
+
+
+def fit(text, width):
+    """Truncate to keep the columns aligned; a trailing '*' marks a cut name."""
+    return text if len(text) <= width else text[: width - 1] + "*"
+
+
+def fmt_value(value):
+    """Render a metric value without inventing precision it does not have."""
+    if value is None:
+        return "n/a"
+    # The API is trusted to send finite numbers here, but a report is not worth
+    # crashing over: show whatever arrived rather than raise. json.loads accepts
+    # the NaN/Infinity literals, and int() rejects both.
+    try:
+        number = float(value)
+        if number == int(number) and abs(number) < 1e15:
+            return str(int(number))
+        return f"{number:.4f}"
+    except (TypeError, ValueError, OverflowError):
+        return str(value)
+
+
+def fmt_exact_value(value):
+    """Render a metric value without rounding away dashboard precision."""
+    return "n/a" if value is None else str(value)
+
+
+def fmt_delta(value):
+    """Same tolerance as fmt_value, with the sign the delta column wants."""
+    if value is None:
+        return "n/a"
+    try:
+        return f"{float(value):+.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def find_runs(reports_dir):
+    """Returns (runs, missing) for every flow run under reports_dir.
+
+    runs holds (platform, design, variant, metadata_path); missing holds the
+    (platform, design, variant) of a run directory with no metadata.json. The
+    caller reports those rather than this function, so the warning survives
+    --platform/--design/--variant filtering and reaches the log file.
+
+    Uses relpath rather than the `len(dir.split(os.sep)) != 4` idiom the other
+    report scripts use: that one counts segments from the repo root, so it only
+    works while the walk root stays a single path segment.
+    """
+    runs, missing = [], []
+    for current, _, files in sorted(os.walk(reports_dir)):
+        relative = os.path.relpath(current, reports_dir)
+        parts = relative.split(os.sep)
+        if relative == "." or len(parts) != 3:
+            continue
+
+        platform, design, variant = parts
+        if platform in SKIPPED_PLATFORMS:
+            continue
+        if any(word in variant for word in SKIPPED_FLOW_VARIANT_KEYWORDS):
+            continue
+        if METADATA_FILENAME not in files:
+            missing.append((platform, design, variant))
+            continue
+
+        runs.append(
+            (platform, design, variant, os.path.join(current, METADATA_FILENAME))
+        )
+    return runs, missing
+
+
+class MetadataError(Exception):
+    """metadata.json is missing, unreadable, or holds no numeric metric."""
+
+
+def load_metadata(path, only_prefix=None):
+    """Returns (metrics, commit_sha, dropped), or raises MetadataError.
+
+    dropped names the metrics left out because their value is not finite.
+
+    only_prefix keeps just the metrics whose name starts with one of the given
+    prefixes. The dashboard evaluates only the metrics it receives, so sending
+    the synth__ subset gates a synthesis-only run without a separate rule set.
+    """
+    try:
+        with open(path, encoding="utf-8") as metadata_file:
+            raw = json.load(metadata_file)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise MetadataError(f"could not read {path}: {error}") from error
+    if not isinstance(raw, dict):
+        raise MetadataError(f"{path} is not a JSON object")
+
+    # The API takes a name -> number map, so every string value is dropped. That
+    # includes constraints__clocks__details, which is a list and is the clock
+    # period source for timing rules -- the dashboard reads it from the baseline build
+    # instead, so a baseline predating that metric degrades a PeriodPadding rule
+    # to a plain percentage band. Such a rule reports ruleSource
+    # 'rule_config_no_period' below rather than failing quietly.
+    metrics = {
+        key: value
+        for key, value in raw.items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
+
+    # __iter__N keys are numeric and would pass the filter, but ingestion folds
+    # the iteration index into a separate column, so no metric definition matches
+    # them and the dashboard discards them server-side. Dropping them here keeps the
+    # reported metric count honest.
+    metrics = {key: value for key, value in metrics.items() if "__iter__" not in key}
+
+    if only_prefix:
+        metrics = {
+            key: value
+            for key, value in metrics.items()
+            if any(key.startswith(prefix) for prefix in only_prefix)
+        }
+        if not metrics:
+            raise MetadataError(
+                f"no numeric metric in {path} starts with " + " or ".join(only_prefix)
+            )
+
+    # ORFS writes inf/-inf/NaN for a metric it could not compute (an unconstrained
+    # timing path reports -inf TNS). json.dumps renders those as bare Infinity/NaN
+    # tokens, which are not JSON: the dashboard rejects the whole request with
+    # HTTP 400, so one unusable metric would cost the run its verdict. A value
+    # that is not finite has nothing to compare against, so leave it out.
+    dropped = sorted(key for key, value in metrics.items() if not math.isfinite(value))
+    metrics = {key: value for key, value in metrics.items() if key not in dropped}
+
+    if not metrics:
+        if dropped:
+            raise MetadataError(
+                f"no finite numeric metrics in {path}; non-finite: "
+                + ", ".join(dropped)
+            )
+        raise MetadataError(f"no numeric metrics in {path}")
+
+    commit = str(raw.get(COMMIT_KEY, ""))
+    return metrics, commit if SHA_RE.match(commit) else "", dropped
+
+
+def current_branch():
+    """The branch checked out in this repository, or "" when git cannot say.
+
+    A detached HEAD reads as "HEAD", which the dashboard treats as any other
+    non-trunk branch: it compares against the merge base, which is the right
+    baseline for a detached checkout too.
+    """
+    try:
+        output = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return output.strip()
+
+
+def git(*args):
+    """Runs git in this repository; returns its stdout, or None when it fails."""
+    try:
+        return subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+@functools.lru_cache(maxsize=None)
+def local_merge_base(commit, ref):
+    """Returns (sha, error) for pinning a commit that no remote has.
+
+    The dashboard finds a merge base through GitHub, so a commit that was never
+    pushed falls back to the latest master build, which may be newer than the
+    commit's base. Both are None when the dashboard can resolve the commit
+    itself: it is on a remote branch, or it is not in this repository (a
+    downloaded CI artifact). error is set when the commit is local but has no
+    merge base with ref.
+    """
+    if git("cat-file", "-e", f"{commit}^{{commit}}") is None:
+        return None, None
+    if git("for-each-ref", "--count=1", "--contains", commit, "refs/remotes"):
+        return None, None
+    sha = git("merge-base", commit, ref)
+    if not sha:
+        return None, (
+            f"commit {commit[:12]} is on no remote and has no merge base with "
+            f"{ref}. Set DASHBOARD_MERGE_BASE to another ref, or to none to "
+            "compare against the latest master build."
+        )
+    return sha, None
+
+
+def post_check(endpoint, api_key, payload):
+    """POSTs one run, retrying transient failures.
+
+    Returns (response, error_message); one of them is None.
+    """
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    # Never accept the key as a flag: argv is visible to every other user on the
+    # machine through ps.
+    if api_key:
+        request.add_header("X-Api-Key", api_key)
+
+    error_message = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
+                return json.loads(response.read().decode("utf-8")), None
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace").strip()
+            error_message = f"HTTP {error.code}: {body[:400]}"
+            if error.code not in RETRYABLE_STATUS:
+                return None, error_message
+        except Exception as error:  # urllib raises a wide family; none is fatal here
+            error_message = str(error)
+
+        # Linear, not exponential: the whole sweep runs under one developer's
+        # attention, and the failures worth waiting out are seconds long.
+        if attempt < RETRY_ATTEMPTS:
+            time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+
+    return None, f"{error_message} (after {RETRY_ATTEMPTS} attempts)"
+
+
+def check_run(
+    run,
+    endpoint,
+    api_key,
+    base_commit,
+    job_name,
+    only_prefix=None,
+    commit="",
+    branch="",
+    merge_base_ref=None,
+):
+    """Checks one (platform, design, variant) and returns a result dict.
+
+    commit replaces the one metadata.json records. branch is sent only with a
+    job_name: without one the dashboard ignores it and resolves the baseline
+    from the commit alone. merge_base_ref, when set, pins a commit that no
+    remote has to its merge base with that ref.
+    """
+    platform, design, variant, metadata_path = run
+    result = {
+        "platform": platform,
+        "design": design,
+        "variant": variant,
+        "status": "error",
+        "response": None,
+        "error": None,
+        "metric_count": 0,
+        "dropped": [],
+        "merge_base": None,
+    }
+
+    # One run's surprise must not take down the sweep: this is called from a
+    # thread pool, so an escaping exception would surface out of pool.map and
+    # skip the report for every other run. Report it as this run's error and let
+    # the other runs finish; exit_code() turns it into the documented status.
+    try:
+        # A bad local file is the caller's problem, not the service's: it gets
+        # its own status so it exits 1 instead of passing as inconclusive.
+        try:
+            metrics, recorded_commit, dropped = load_metadata(
+                metadata_path, only_prefix
+            )
+        except MetadataError as error:
+            result["status"] = "invalid"
+            result["error"] = str(error)
+            return result
+        result["metric_count"] = len(metrics)
+        result["dropped"] = dropped
+        commit = commit or recorded_commit
+        result["commit"] = commit
+
+        if merge_base_ref and commit and not base_commit:
+            base_commit, error = local_merge_base(commit, merge_base_ref)
+            if error:
+                result["status"] = "invalid"
+                result["error"] = error
+                return result
+            result["merge_base"] = base_commit
+
+        # No JobName and no PipelineId makes this a checkout to the dashboard:
+        # it picks the pipeline itself, the first of its default baseline
+        # pipelines with a build of this design. A JobName makes it a build of
+        # that pipeline, resolved by that pipeline's rules for BranchName.
+        payload = {
+            "CommitSha": commit,
+            "BranchName": branch if job_name else "",
+            "PipelineId": "",
+            "PlatformName": platform,
+            "DesignName": design,
+            "VariantName": variant,
+            "Metrics": metrics,
+        }
+        if job_name:
+            payload["JobName"] = job_name
+        if base_commit:
+            payload["BaseCommitSha"] = base_commit
+
+        response, error = post_check(endpoint, api_key, payload)
+        if error is not None:
+            result["error"] = error
+            return result
+
+        # render_run reads the response as a mapping. A well-formed endpoint
+        # always sends one, but a proxy error page or a bare JSON list would
+        # not, so reject it here instead of raising a level up.
+        if not isinstance(response, dict):
+            result["error"] = f"unexpected response type: {type(response).__name__}"
+            return result
+
+        result["response"] = response
+        result["status"] = response.get("status", "unknown")
+    except Exception as error:  # reported as this run's error, never raised
+        result["error"] = f"{type(error).__name__}: {error}"
+        result["response"] = None
+        result["status"] = "error"
+    return result
+
+
+def dropped_lines(result):
+    """The warning naming the non-finite metrics left out of the request, if any."""
+    if not result["dropped"]:
+        return []
+    return [
+        f"[WARN] Left out {len(result['dropped'])} non-finite metric(s): "
+        + ", ".join(result["dropped"])
+    ]
+
+
+def render_run(result, verbose):
+    """Builds the report lines for one run."""
+    identity = f"{result['platform']}/{result['design']}/{result['variant']}"
+    lines = [BANNER]
+
+    if result["status"] == "invalid":
+        lines.append(f"[ERROR] {identity}: {result['error']}")
+        return lines
+
+    if result["status"] == "error":
+        # genReport.py counts [ERROR] lines in metadata-check.log as a failed
+        # design. An unreachable service does not fail the check, so it must
+        # not read as one.
+        lines.append(f"[WARN] {identity}: dashboard not reached: {result['error']}")
+        return lines
+
+    response = result["response"]
+    strategy = response.get("baselineStrategy") or "none"
+
+    if result["status"] == "no_baseline":
+        lines.append(
+            f"[WARN] {identity}: no baseline to compare against "
+            f"(strategy={strategy}). Nothing was checked."
+        )
+        if result["merge_base"]:
+            lines.append(
+                f"[WARN] The baseline was pinned to {result['merge_base'][:12]}, "
+                "the local merge base, which has no build of this design. Set "
+                "DASHBOARD_MERGE_BASE=none to compare against the latest master "
+                "build instead."
+            )
+        lines.extend(dropped_lines(result))
+        return lines
+
+    totals = response.get("totals", {})
+    passed = totals.get("passed", 0)
+    failed = totals.get("failed", 0)
+    missing = totals.get("missingFromBaseline", 0)
+    prefix = "[ERROR]" if failed else "[INFO]"
+
+    lines.append(
+        f"{prefix} {identity}: {result['status'].upper()} — "
+        f"{passed} passed, {failed} failed, {missing} missing "
+        f"({result['metric_count']} metrics sent)"
+    )
+    pipeline = response.get("baselinePipeline")
+    lines.append(
+        f"[INFO] baseline build {response.get('baseBuildId')} "
+        f"({(response.get('baseCommitSha') or '?')[:12]}, {strategy}"
+        f"{', ' + pipeline if pipeline else ''})"
+    )
+    if result["merge_base"]:
+        lines.append(
+            f"[INFO] {result['commit'][:12]} is on no remote, so the baseline "
+            f"was pinned to its local merge base {result['merge_base'][:12]}"
+        )
+    # The latest master build may be newer than the commit's base, so upstream
+    # changes since then would read as this run's regressions, and the result
+    # moves with master.
+    if strategy == "latest-master":
+        if result.get("commit"):
+            lines.append(
+                f"[WARN] The dashboard found no master build at the merge base "
+                f"of {result['commit'][:12]}, so this was compared against the "
+                "latest master build, which may be newer than the commit's base. "
+                "Set DASHBOARD_BASE_COMMIT (--base-commit) for an exact baseline."
+            )
+        else:
+            lines.append(
+                "[WARN] metadata.json records no commit, so this was compared "
+                "against the latest master build."
+            )
+    lines.extend(dropped_lines(result))
+
+    if result["status"] == "inconclusive":
+        lines.append(
+            "[WARN] Nothing was evaluated. The design may not be ingested yet, "
+            "or the platform is private and no DASHBOARD_API_KEY was set."
+        )
+
+    metrics = response.get("metrics", [])
+    shown = metrics if verbose else [m for m in metrics if m.get("status") == "fail"]
+    shown = [m for m in shown if m.get("status") != "missing_from_baseline"]
+
+    if shown:
+        lines.append(ROW_FMT.format("Metric", "Baseline", "Current", "Limit", "Delta%"))
+        lines.append(
+            ROW_FMT.format("-" * NAME_W, "-" * 12, "-" * 12, "-" * 12, "-" * 7)
+        )
+        for metric in sorted(shown, key=lambda m: m.get("metricName", "")):
+            delta = metric.get("deltaPct")
+            lines.append(
+                ROW_FMT.format(
+                    fit(metric.get("metricName", "?"), NAME_W),
+                    fmt_value(metric.get("baseValue")),
+                    fmt_value(metric.get("targetValue")),
+                    fmt_value(metric.get("thresholdValue")),
+                    fmt_delta(delta),
+                )
+            )
+
+    failed_metrics = [m for m in metrics if m.get("status") == "fail"]
+    if failed_metrics:
+        lines.append(
+            f"QoR regression detected for {result['platform']}/{result['design']}:"
+        )
+        for metric in sorted(failed_metrics, key=lambda m: m.get("metricName", "")):
+            lines.append(
+                f"  {metric.get('metricName', '?')} "
+                f"{fmt_exact_value(metric.get('targetValue'))} "
+                f"(base {fmt_exact_value(metric.get('baseValue'))}, "
+                f"limit {fmt_exact_value(metric.get('thresholdValue'))})"
+            )
+
+    # A design can have hundreds of absent metrics, so name them only on request.
+    absent = sorted(
+        metric.get("metricName", "?")
+        for metric in metrics
+        if metric.get("status") == "missing_from_baseline"
+    )
+    if absent and verbose:
+        lines.append(
+            "[WARN] Rules not evaluated, metric absent from the baseline build: "
+            + ", ".join(absent)
+        )
+    elif absent:
+        lines.append(
+            f"[WARN] Rules not evaluated for {len(absent)} metric(s) absent from "
+            "the baseline build. Use --verbose to list them."
+        )
+
+    # A rule that fell back reports a different threshold than the one it was
+    # configured with, so surface it. thresholdPct is deliberately not shown in
+    # the table above: it is meaningless for Metric and Direct modes, where the
+    # limit is derived from a reference metric or is the baseline itself.
+    for metric in metrics:
+        source = metric.get("ruleSource")
+        if source in (None, "rule_config", "none"):
+            continue
+        lines.append(
+            f"[WARN] {metric.get('metricName')}: rule fell back to "
+            f"{metric.get('mode')} ({source})."
+        )
+
+    return lines
+
+
+def summarize(results):
+    """Builds the trailing summary lines."""
+    counts = {}
+    for result in results:
+        counts[result["status"]] = counts.get(result["status"], 0) + 1
+
+    failing = [
+        f"{r['platform']}/{r['design']}/{r['variant']}"
+        for r in results
+        if r["status"] == "fail"
+    ]
+
+    lines = [BANNER]
+    lines.append(
+        "[INFO] QoR dashboard check summary: "
+        f"{len(results)} run(s), "
+        f"{counts.get('pass', 0)} passed, "
+        f"{counts.get('fail', 0)} failed, "
+        f"{counts.get('inconclusive', 0)} inconclusive, "
+        f"{counts.get('no_baseline', 0)} without a baseline, "
+        f"{counts.get('error', 0)} not reached, "
+        f"{counts.get('invalid', 0)} with unusable metadata"
+    )
+    if failing:
+        lines.append(f"[ERROR] Failing runs: {', '.join(sorted(failing))}")
+    else:
+        lines.append("[INFO] No run failed a QoR dashboard rule.")
+
+    # Last line, fixed vocabulary: a log classifier (Jenkins reads
+    # metadata-check.log) matches this instead of the counts above.
+    lines.append(f"QoR check: {verdict(results)}")
+    return lines
+
+
+def verdict(results):
+    """Overall verdict for a set of runs: ERROR, FAIL, PASS, or INCONCLUSIVE.
+
+    ERROR means a metadata.json could not be used, so the check could not even
+    be attempted for that run. FAIL wins over the rest: one failed rule is a
+    regression no matter how the other runs did. PASS needs every run to have
+    passed. Anything else -- no baseline, nothing evaluated, a request that
+    never got an answer -- is INCONCLUSIVE: the check did not run for at least
+    one run.
+    """
+    statuses = {result["status"] for result in results}
+    if "invalid" in statuses:
+        return "ERROR"
+    if "fail" in statuses:
+        return "FAIL"
+    if statuses == {"pass"}:
+        return "PASS"
+    return "INCONCLUSIVE"
+
+
+def exit_code(results, strict):
+    """Maps the results to the process exit status.
+
+    1 on FAIL and on ERROR. 0 on PASS. INCONCLUSIVE is 0 unless strict, where
+    a run the service never answered (status 'error') is 3 and any other
+    inconclusive outcome is 2, matching the contract the Jenkins inline check
+    uses.
+    """
+    overall = verdict(results)
+    if overall in ("FAIL", "ERROR"):
+        return 1
+    if overall == "PASS" or not strict:
+        return 0
+    if any(result["status"] == "error" for result in results):
+        return 3
+    return 2
+
+
+def write_log(lines):
+    """Saves the report, replacing whatever an earlier sweep left behind.
+
+    Called on every path that gets as far as having something to report, so the
+    documented log always describes the run that just finished rather than a
+    stale sweep. The one path that skips it is a missing reports/ directory:
+    the log lives inside it, so there is nothing there to go stale.
+    """
+    log_path = os.path.abspath(LOG_FILENAME)
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "w", encoding="utf-8") as log_file:
+            log_file.write("\n".join(lines) + "\n")
+        print(f"[INFO] Report written to {log_path}")
+    except OSError as error:
+        print(f"[WARN] Could not write {log_path}: {error}")
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--beta",
+        action="store_true",
+        help=f"Check against {BETA_API_URL} instead of {API_URL}.",
+    )
+    parser.add_argument(
+        "--base-commit",
+        default=os.environ.get("DASHBOARD_BASE_COMMIT") or None,
+        help="Pin the baseline to this commit's build instead of resolving one. "
+        "Env: DASHBOARD_BASE_COMMIT.",
+    )
+    parser.add_argument(
+        "--merge-base",
+        default=os.environ.get("DASHBOARD_MERGE_BASE") or DEFAULT_MERGE_BASE_REF,
+        metavar="REF",
+        help="Pin a commit that is on no remote branch to its merge base with "
+        f"REF, since the dashboard cannot find one. Default: "
+        f"{DEFAULT_MERGE_BASE_REF}; none turns it off. Ignored with --base-commit "
+        "or --job-name. Env: DASHBOARD_MERGE_BASE.",
+    )
+    parser.add_argument(
+        "--api-url",
+        default=os.environ.get("DASHBOARD_API_URL") or None,
+        help="Dashboard API base URL, e.g. a staging deployment. Takes "
+        "precedence over --beta. Env: DASHBOARD_API_URL.",
+    )
+    parser.add_argument(
+        "--commit",
+        default=os.environ.get("DASHBOARD_COMMIT", ""),
+        help="Full commit SHA to check as, instead of the one metadata.json "
+        "records. Env: DASHBOARD_COMMIT.",
+    )
+    parser.add_argument(
+        "--branch",
+        default=os.environ.get("DASHBOARD_BRANCH") or None,
+        help="With --job-name: the branch to check as, instead of the one "
+        "checked out here, e.g. the PR branch in CI. "
+        "Env: DASHBOARD_BRANCH.",
+    )
+    parser.add_argument(
+        "--job-name",
+        default=os.environ.get("DASHBOARD_JOB_NAME") or None,
+        help="Check as a build of this CI pipeline, with its rules for the "
+        "branch. Default: the dashboard searches its default baseline "
+        "pipelines and takes the first with a build of the design, private "
+        "ones included with DASHBOARD_API_KEY. Meant for CI. "
+        "Env: DASHBOARD_JOB_NAME.",
+    )
+    parser.add_argument(
+        "--metadata",
+        "-m",
+        help="Check this one metadata.json instead of sweeping reports/. "
+        "Requires --platform and --design to name the run for the dashboard.",
+    )
+    parser.add_argument(
+        "--only-prefix",
+        nargs="+",
+        default=None,
+        metavar="PREFIX",
+        help="Send only metrics whose name starts with one of these prefixes, "
+        "e.g. synth__ constraints__ to gate a synthesis-only run.",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit 2 when a run is inconclusive and 3 when the dashboard was "
+        "unreachable, instead of 0 with a warning.",
+    )
+    parser.add_argument(
+        "--platform",
+        "-p",
+        help="Only check this platform. With --metadata: the run's platform.",
+    )
+    parser.add_argument(
+        "--design",
+        "-d",
+        help="Only check this design. With --metadata: the run's design.",
+    )
+    parser.add_argument(
+        "--variant",
+        help="Only check this flow variant. With --metadata: the run's variant "
+        "(default: base).",
+    )
+    parser.add_argument(
+        "--jobs",
+        "-j",
+        type=int,
+        default=8,
+        help="Concurrent requests. Default: 8.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Report every rule-checked metric, not only the failing ones, "
+        "and name the metrics absent from the baseline build.",
+    )
+    args = parser.parse_args(argv)
+    if args.metadata and not (args.platform and args.design):
+        parser.error("--metadata requires --platform and --design")
+    return args
+
+
+def sweep_runs(args):
+    """Returns (runs, header) for sweep mode, or (None, header) with nothing to do.
+
+    The header carries the warnings for run directories without a metadata.json,
+    built after the --platform/--design/--variant filter so a scoped sweep does
+    not warn about designs it was never asked to check.
+    """
+    reports_dir = REPORTS_FOLDER
+    if not os.path.isdir(reports_dir):
+        print(f"[ERROR] No reports directory at {reports_dir}. Run the flow first.")
+        return None, []
+
+    runs, missing = find_runs(reports_dir)
+
+    def selected(entry):
+        """Applies --platform/--design/--variant to a run or a missing entry."""
+        platform, design, variant = entry[0], entry[1], entry[2]
+        return (
+            (not args.platform or platform == args.platform)
+            and (not args.design or design == args.design)
+            and (not args.variant or variant == args.variant)
+        )
+
+    runs = [run for run in runs if selected(run)]
+    missing = [entry for entry in missing if selected(entry)]
+
+    header = [
+        f"[WARN] No {METADATA_FILENAME} for {platform} {design} {variant}."
+        for platform, design, variant in missing
+    ]
+
+    if not runs:
+        header.append(
+            f"[WARN] No flow run with a {METADATA_FILENAME} "
+            f"found under {reports_dir}."
+        )
+        for line in header:
+            print(line)
+        write_log(header)
+        return None, header
+
+    return runs, header
+
+
+def run_check(argv=None):
+    args = parse_args(argv)
+
+    api_url = args.api_url or (BETA_API_URL if args.beta else API_URL)
+    endpoint = api_url.rstrip("/") + CHECK_PATH
+    api_key = os.environ.get("DASHBOARD_API_KEY", "")
+    # The dashboard matches both commits exactly. A missed --commit falls back to
+    # the latest master build and a missed --base-commit to no baseline, both
+    # silently, so anything but a full SHA is an error.
+    commit = (args.commit or "").strip().lower()
+    base_commit = (args.base_commit or "").strip().lower()
+    for flag, value in (("--commit", commit), ("--base-commit", base_commit)):
+        if value and not SHA_RE.match(value):
+            line = f"[ERROR] {flag} {value!r} is not a full 40-character SHA."
+            print(line)
+            if not args.metadata and os.path.isdir(REPORTS_FOLDER):
+                write_log([line])
+            return 1
+    # A pipeline run follows its CI branch rules, and CI checkouts often fetch
+    # no remote branches, so every commit there would look unpushed.
+    merge_base_ref = None
+    if not (base_commit or args.job_name) and args.merge_base.lower() != "none":
+        merge_base_ref = args.merge_base
+    # Only a pipeline run uses the branch; a checkout is resolved from the commit.
+    branch = ""
+    if args.job_name:
+        branch = (args.branch if args.branch is not None else current_branch()).strip()
+
+    if args.metadata:
+        # Single-run mode: the caller (make metadata-check) names the run and
+        # tees stdout into its own log, so no sweep log is written here.
+        metadata_path = os.path.join(INVOCATION_DIR, args.metadata)
+        if not os.path.isfile(metadata_path):
+            print(f"[ERROR] No {metadata_path}. Run `make metadata-generate` first.")
+            return 1
+        runs = [(args.platform, args.design, args.variant or "base", metadata_path)]
+        header = []
+    else:
+        runs, header = sweep_runs(args)
+        if runs is None:
+            # Nothing to check is not a failed check. Strict callers get the
+            # inconclusive code so CI can tell "no reports" from a pass.
+            return 2 if args.strict else 0
+
+    # Printed now so a long sweep is not silent, and kept for the log file: a
+    # saved report is unreadable without knowing which deployment answered it and
+    # whether the caller had a key.
+    header.append(f"[INFO] Checking {len(runs)} run(s) against {endpoint}")
+    if not api_key:
+        header.append(
+            "[INFO] No DASHBOARD_API_KEY set — checking public data only. "
+            "Private platforms will report as inconclusive, not as an auth error."
+        )
+    if base_commit:
+        header.append(f"[INFO] Baseline pinned to commit {base_commit}")
+    elif args.job_name and branch == "HEAD":
+        header.append(
+            f"[WARN] Checking as a build of {args.job_name} with a detached HEAD "
+            "(no --branch): resolved as a feature branch."
+        )
+    elif args.job_name and branch:
+        header.append(
+            f"[INFO] Checking as a build of {args.job_name}, branch {branch}"
+            + (f", commit {commit}" if commit else "")
+        )
+    elif args.job_name:
+        header.append(
+            f"[WARN] Checking as a build of {args.job_name} with no branch (git "
+            "could not name one, and no --branch): resolved as a feature branch."
+        )
+    else:
+        header.append(
+            "[INFO] Baseline from the dashboard's default pipelines, resolved "
+            "from " + (f"commit {commit}" if commit else "each run's recorded commit")
+        )
+    if merge_base_ref:
+        header.append(
+            f"[INFO] A commit on no remote branch is pinned to its merge base with "
+            f"{merge_base_ref} (DASHBOARD_MERGE_BASE=none turns this off)"
+        )
+    if args.branch and not args.job_name:
+        header.append(
+            "[WARN] --branch (DASHBOARD_BRANCH) is ignored without --job-name: "
+            "a checkout is resolved from its commit."
+        )
+    if args.only_prefix:
+        prefixes = " ".join(args.only_prefix)
+        header.append(f"[INFO] Sending only metrics prefixed {prefixes}")
+    for line in header:
+        print(line)
+
+    # pool.map keeps input order, so the report reads in a stable
+    # platform/design/variant order no matter which requests finish first.
+    workers = max(1, min(args.jobs, len(runs)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(
+            pool.map(
+                lambda run: check_run(
+                    run,
+                    endpoint,
+                    api_key,
+                    base_commit,
+                    args.job_name,
+                    args.only_prefix,
+                    commit,
+                    branch,
+                    merge_base_ref,
+                ),
+                runs,
+            )
+        )
+
+    body = []
+    for result in results:
+        body.extend(render_run(result, args.verbose))
+    body.extend(summarize(results))
+
+    for line in body:
+        print(line)
+
+    if not args.metadata:
+        write_log(header + body)
+
+    return exit_code(results, args.strict)
+
+
+if __name__ == "__main__":
+    sys.exit(run_check())
