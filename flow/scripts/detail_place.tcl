@@ -1,10 +1,8 @@
 utl::set_metrics_stage "detailedplace__{}"
 source $::env(SCRIPTS_DIR)/load.tcl
 erase_non_stage_variables place
-load_design 3_4_place_resized.odb 2_floorplan.sdc
+load_design 3_4_place_resized.odb
 source_step_tcl PRE DETAIL_PLACE
-
-source $::env(PLATFORM_DIR)/setRC.tcl
 
 proc do_dpl { } {
   # Only for use with hybrid rows
@@ -15,9 +13,7 @@ proc do_dpl { } {
   set_placement_padding -global \
     -left $::env(CELL_PAD_IN_SITES_DETAIL_PLACEMENT) \
     -right $::env(CELL_PAD_IN_SITES_DETAIL_PLACEMENT)
-  set dpl_args [env_var_or_empty DETAIL_PLACEMENT_ARGS]
-  append_env_var dpl_args USE_NEGOTIATION -use_negotiation 0
-  log_cmd detailed_placement {*}$dpl_args
+  detailed_placement_helper
 
   if { $::env(ENABLE_DPO) } {
     if { [env_var_exists_and_non_empty DPO_MAX_DISPLACEMENT] } {
@@ -28,9 +24,9 @@ proc do_dpl { } {
   }
   log_cmd optimize_mirroring
 
-  utl::info FLW 12 "Placement violations [check_placement -verbose]."
+  utl::info FLW 12 "Placement violations [check_placement -placeable -verbose]."
 
-  log_cmd estimate_parasitics -placement
+  log_cmd estimate_parasitics
 }
 
 set result [catch { do_dpl } errMsg]

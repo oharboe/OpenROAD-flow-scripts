@@ -30,37 +30,47 @@ def replace_map_files(content, map_files):
     return content
 
 
-def generate_klayout_tech(
-    template_lyt,
-    output_lyt,
-    lef_files,
-    reference_dir,
-    map_files,
-    use_relative_paths,
-):
+def blackbox_lefs(blackboxes):
+    """The LEF of every macro AUTO_MEMORIES' blackboxes.txt lists.
+
+    blackboxes.txt has a `<module> <area>` line per macro, and
+    do-auto-memories writes <module>.lef beside it.
+    """
+    directory = os.path.dirname(blackboxes)
+    with open(blackboxes, encoding="utf-8") as f:
+        return [
+            os.path.join(directory, line.split()[0] + ".lef")
+            for line in f
+            if line.strip()
+        ]
+
+
+def generate_klayout_tech(template_lyt, output_lyt, lef_files, map_files=None):
     """Generate a klayout .lyt file from a platform template.
 
     Args:
         template_lyt: Path to the platform .lyt template file.
         output_lyt: Path to write the generated .lyt file.
         lef_files: List of LEF file paths to include.
-        reference_dir: Directory to compute relative paths from.
         map_files: List of map file paths.
-        use_relative_paths: If True, compute paths relative to reference_dir.
     """
     with open(template_lyt, "r") as f:
         content = f.read()
 
-    # Both modes use relative paths from reference_dir, matching the
-    # original sed-based behavior which always uses realpath --relative-to.
-    resolved_lefs = [
-        os.path.relpath(os.path.realpath(f), os.path.realpath(reference_dir))
-        for f in lef_files
-    ]
+    # Write absolute (not relative, not realpath'd) LEF paths into the LYT.
+    # Klayout's Layout.read(def, layout_options) follows the symlinked input
+    # DEF to its realpath at the bare execroot and resolves relative
+    # <lef-files> entries from there.  Sibling intermediates like
+    # objects/klayout_tech.lef don't exist at the bare execroot during
+    # action execution -- they're only at the per-action sandbox -- so
+    # resolution fails with errno=2.  Plain abspath (NOT realpath, which
+    # would chase Bazel input-file symlinks back out to the bare execroot)
+    # keeps klayout pointed at the in-sandbox file.
+    resolved_lefs = [os.path.abspath(f) for f in lef_files]
 
     content = replace_lef_files(content, resolved_lefs)
 
-    resolved_maps = [os.path.realpath(f) for f in map_files]
+    resolved_maps = [os.path.abspath(f) for f in (map_files or [])]
     content = replace_map_files(content, resolved_maps)
 
     with open(output_lyt, "w") as f:
@@ -79,27 +89,24 @@ def main():
         "--lef-files", nargs="*", default=[], help="LEF files to include"
     )
     parser.add_argument(
-        "--reference-dir",
-        required=True,
-        help="Directory for computing relative paths",
-    )
-    parser.add_argument(
         "--map-files", nargs="*", default=[], help="Map files to include"
     )
     parser.add_argument(
-        "--use-relative-paths",
-        action="store_true",
-        help="Use paths relative to reference-dir",
+        "--blackboxes",
+        help="AUTO_MEMORIES' blackboxes.txt; the LEF of each macro it lists"
+        " is included after --lef-files",
     )
     args = parser.parse_args()
+
+    lef_files = list(args.lef_files)
+    if args.blackboxes:
+        lef_files += blackbox_lefs(args.blackboxes)
 
     generate_klayout_tech(
         template_lyt=args.template,
         output_lyt=args.output,
-        lef_files=args.lef_files,
-        reference_dir=args.reference_dir,
+        lef_files=lef_files,
         map_files=args.map_files,
-        use_relative_paths=args.use_relative_paths,
     )
 
 
