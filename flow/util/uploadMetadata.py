@@ -3,14 +3,9 @@
 import json
 import argparse
 import os
+import re
+import sys
 from datetime import datetime, timezone
-
-# --- FIRESTORE (remove when deprecating) ---
-import firebase_admin
-from firebase_admin import credentials
-from firebase_admin import firestore
-
-# --- END FIRESTORE ---
 
 # --- PUBSUB ---
 from google.cloud import pubsub_v1
@@ -18,8 +13,42 @@ from google.oauth2 import service_account
 
 # --- END PUBSUB ---
 
+# Remember where we were invoked from: the chdir below would otherwise silently
+# reinterpret any relative path passed on the command line as relative to flow/.
+INVOCATION_DIR = os.getcwd()
+
 # make sure the working dir is flow/
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+BUILD_TIME_FORMAT = "%Y-%m-%d %H:%M"
+# The backend drops a longer no_metrics_reason without an error.
+MAX_NO_METRICS_REASON = 100
+
+
+def _build_time(val):
+    """Validate --buildTime against BUILD_TIME_FORMAT; blank means unset."""
+    val = val.strip()
+    if not val:
+        return None
+    try:
+        parsed = datetime.strptime(val, BUILD_TIME_FORMAT)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"'{val}' does not match the expected format 'YYYY-MM-DD HH:MM'"
+        )
+    # strptime accepts unpadded fields such as "2026-1-5 1:3".
+    return parsed.strftime(BUILD_TIME_FORMAT)
+
+
+def _non_negative_int(val):
+    try:
+        number = int(val)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{val}' is not an integer")
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"'{val}' is negative")
+    return number
+
 
 # Create the argument parser
 parser = argparse.ArgumentParser(description="Process some integers.")
@@ -33,8 +62,74 @@ parser.add_argument("--jenkinsURL", type=str, help="Jenkins Report URL")
 parser.add_argument(
     "--changeBranch", type=str, help="Branch corresponding to change request"
 )
-parser.add_argument("--cred", type=str, help="Service account credentials file")
 parser.add_argument("--variant", type=str, default="base")
+parser.add_argument(
+    "--jobName",
+    type=str,
+    default=None,
+    help="Canonical Jenkins job-folder name (JOB_NAME with the trailing "
+    "/<branch> segment stripped, folder slashes kept). When set, the "
+    "Pub/Sub payload is emitted as schema v3 with a top-level job_name "
+    "so the backend resolves the pipeline directly instead of "
+    "classifying the BUILD_TAG.",
+)
+parser.add_argument(
+    "--provenanceFile",
+    type=str,
+    default=None,
+    help="Path to a JSON file describing what was actually built: the "
+    "jenkins-ci shared-library version and the submodule commits present in "
+    "the build workspace. Must be produced there, not here — nightly "
+    "pipelines repoint tools/OpenROAD, so the reporting workspace holds the "
+    "pinned commit rather than the built one. When supplied alongside "
+    "--jobName the payload is emitted as schema v4.",
+)
+parser.add_argument(
+    "--buildTime",
+    type=_build_time,
+    default=None,
+    help="When the build ran, emitted as build_time on the pipeline payload. "
+    "Defaults to now in UTC, in the format genMetrics.py uses for "
+    "run__flow__generate_date (%%Y-%%m-%%d %%H:%%M). The backend reads it "
+    "as UTC.",
+)
+parser.add_argument(
+    "--expectedDesigns",
+    type=_non_negative_int,
+    default=None,
+    help="Number of designs the pipeline set out to build. When positive, "
+    "emitted as design_count on the pipeline payload so the backend can tell "
+    "a build that produced fewer (or no) metrics from one that built fewer "
+    "designs. 0 is accepted but not sent, since the backend ignores it. Not "
+    "sent on the per-design fallback for oversized payloads.",
+)
+parser.add_argument(
+    "--noMetricsReason",
+    type=str,
+    default=None,
+    help="Why no design produced metrics, as a short code such as "
+    "no_reports_found (at most 100 characters; a longer value is dropped with "
+    "a warning). Emitted as no_metrics_reason only on a payload with no "
+    "designs.",
+)
+parser.add_argument(
+    "--buildUserEmail",
+    type=str,
+    default=None,
+    help="Email of the Jenkins user who started the build by hand "
+    "(BUILD_USER_EMAIL). Omitted for SCM, timer and branch-scan triggers. "
+    "The dashboard attributes the build to this user. Defaults to "
+    "$UPLOAD_BUILD_USER_EMAIL, which keeps the address out of a traced "
+    "(sh -x) command line.",
+)
+parser.add_argument(
+    "--changeAuthorEmail",
+    type=str,
+    default=None,
+    help="Email of the pull request's author on a PR build "
+    "(CHANGE_AUTHOR_EMAIL). Empty when the author's GitHub email is private. "
+    "Defaults to $UPLOAD_CHANGE_AUTHOR_EMAIL.",
+)
 
 # --- PUBSUB args ---
 parser.add_argument(
@@ -60,169 +155,340 @@ parser.add_argument(
 args = parser.parse_args()
 
 
-# --- FIRESTORE (remove when deprecating) ---
-def upload_data(db, dataFile, platform, design, variant, args, rules):
-    # Set the document data
-    key = args.commitSHA + "-" + platform + "-" + design + "-" + variant
-    doc_ref = db.collection("build_metrics").document(key)
-    doc_ref.set(
-        {
-            "build_id": args.buildID,
-            "branch_name": args.branchName,
-            "pipeline_id": args.pipelineID,
-            "change_branch": args.changeBranch,
-            "commit_sha": args.commitSHA,
-            "jenkins_url": args.jenkinsURL,
-            "rules": rules,
-        }
-    )
-
-    # Load JSON data from file
-    with open(dataFile) as f:
-        data = json.load(f)
-
-    # Replace the character ':' in the keys
-    new_data = {}
-    stages = []
-    excludes = ["run", "commit", "total_time", "constraints"]
-    gen_date = datetime.now()
-    for k, v in data.items():
-        new_key = k.replace(":", "__")  # replace ':' with '__'
-        new_data[new_key] = v
-        stage_name = k.split("__")[0]
-        if stage_name not in excludes:
-            stages.append(stage_name)
-        if k == "run__flow__generate_date":
-            # Convert string to datetime
-            gen_date = datetime.strptime(v, "%Y-%m-%d %H:%M")
-            new_data[k] = gen_date
-    stages = set(stages)
-    new_data["stages"] = stages
-
-    # Set the data to the document in Firestore
-    doc_ref.update(new_data)
-
-    branch_doc_ref = db.collection("branches").document(args.branchName)
-    # check if date is greater than the one in the document if it exists
-    if branch_doc_ref.get().exists:
-        current_date = branch_doc_ref.get().to_dict().get("run__flow__generate_date")
-        current_date = current_date.replace(tzinfo=timezone.utc)
-        gen_date = gen_date.replace(tzinfo=timezone.utc)
-        if current_date is not None and gen_date > current_date:
-            branch_doc_ref.update(
-                {
-                    "run__flow__generate_date": gen_date,
-                    "jenkins_url": args.jenkinsURL,
-                    "change_branch": args.changeBranch,
-                }
-            )
-        else:
-            branch_doc_ref.update(
-                {
-                    "jenkins_url": args.jenkinsURL,
-                    "change_branch": args.changeBranch,
-                }
-            )
-    else:
-        branch_doc_ref.set(
-            {
-                "name": args.branchName,
-                "run__flow__generate_date": gen_date,
-                "jenkins_url": args.jenkinsURL,
-            }
-        )
-
-    commit_doc_ref = db.collection("commits").document(args.commitSHA)
-    if commit_doc_ref.get().exists:
-        current_date = commit_doc_ref.get().to_dict().get("run__flow__generate_date")
-        current_date = current_date.replace(tzinfo=timezone.utc)
-        gen_date = gen_date.replace(tzinfo=timezone.utc)
-        if current_date is not None and gen_date > current_date:
-            commit_doc_ref.update(
-                {
-                    "run__flow__generate_date": gen_date,
-                    "jenkins_url": args.jenkinsURL,
-                }
-            )
-        else:
-            commit_doc_ref.update(
-                {
-                    "jenkins_url": args.jenkinsURL,
-                }
-            )
-    else:
-        commit_doc_ref.set(
-            {
-                "sha": args.commitSHA,
-                "run__flow__generate_date": gen_date,
-                "jenkins_url": args.jenkinsURL,
-            }
-        )
-
-    platform_doc_ref = db.collection("platforms").document(platform)
-    if platform_doc_ref.get().exists:
-        designs = platform_doc_ref.get().to_dict().get("designs")
-        if design not in designs:
-            design_ref = {
-                "name": design,
-                "rules": rules,
-            }
-            designs[design] = design_ref
-            platform_doc_ref.update(
-                {
-                    "designs": designs,
-                }
-            )
-    else:
-        designs = {}
-        design_ref = {
-            "name": design,
-            "rules": rules,
-        }
-        designs[design] = design_ref
-        platform_doc_ref.set(
-            {
-                "designs": designs,
-                "name": platform,
-            }
-        )
-
-    if (
-        not doc_ref.get().exists
-        or not branch_doc_ref.get().exists
-        or not commit_doc_ref.get().exists
-        or not platform_doc_ref.get().exists
-    ):
-        raise Exception(f"Failed to upload data for {platform} {design} {variant}.")
-
-
-# --- END FIRESTORE ---
-
-
 # --- PUBSUB ---
 # Pub/Sub hard cap is 10 MB. Stay under with safety margin to leave room for
 # attribute overhead and future payload growth.
 MAX_PUBSUB_BYTES = 8 * 1024 * 1024
 
 
-def build_design_record(dataFile, platform, design, variant, rules):
-    """Return a dict for one design to be included in the pipeline-level payload."""
-    with open(dataFile) as f:
-        data = json.load(f)
-    metrics = {k.replace(":", "__"): v for k, v in data.items()}
-    return {
-        "platform": platform,
-        "design": design,
-        "variant": variant,
-        "rules": rules,
-        "metrics": metrics,
-    }
+def build_design_record(dataFile, platform, design, variant, outcome=None):
+    """Return a dict for one design to be included in the pipeline-level payload.
+
+    ``dataFile`` is the design's metadata.json, or ``None`` for a run that ended
+    before writing one; such a record carries only its ``outcome``.
+    """
+    record = {"platform": platform, "design": design, "variant": variant}
+    if dataFile:
+        with open(dataFile) as f:
+            data = json.load(f)
+        record["metrics"] = {k.replace(":", "__"): v for k, v in data.items()}
+    if outcome:
+        record["outcome"] = outcome
+    return record
 
 
-def build_pipeline_payload(design_records, args):
-    """Return the v2 pipeline-level payload dict."""
+# How a flow run ended, as the CI job records it next to the design's reports:
+# {"exit_code": int, "timed_out": bool, "elapsed_minutes": float,
+#  "limit_minutes": int}. Every key is optional.
+STATUS_FILENAME = "flow-status.json"
+MAX_OUTCOME_MESSAGE = 1024
+# Stage log names start with the step number: 1_2_yosys.log, 5_1_grt.log.
+STAGE_LOG = re.compile(r"^(\d+)_(?:(\d+)_)?.*\.log$")
+# The first matching line of a failing stage's log is the error reported. The
+# OpenROAD form carries the tool's message ID; Yosys prints "ERROR: ".
+ERROR_LINE = re.compile(
+    r"\[(?:ERROR|CRITICAL|FATAL) [A-Z][A-Z0-9]*-\d+\].*|^ERROR: .*|^Error: .*"
+)
+# What a tool that died on a signal leaves in its log, as opposed to an error it
+# reported itself.
+CRASH_LINE = re.compile(r"Signal \d+ received|Segmentation fault|core dumped")
+
+
+def _stage_name(log_name):
+    """The flow stage a stage log belongs to, e.g. 5_1_grt.log -> "grt"."""
+    match = STAGE_LOG.match(log_name)
+    if not match:
+        return None
+    step, sub = match.group(1), match.group(2)
+    if step == "5":
+        return "grt" if sub == "1" else "route"
     return {
-        "payload_schema_version": 2,
+        "1": "synth",
+        "2": "floorplan",
+        "3": "place",
+        "4": "cts",
+        "6": "finish",
+    }.get(step)
+
+
+def _stage_logs(log_dir):
+    """The design's stage logs, last step first."""
+    try:
+        names = os.listdir(log_dir)
+    except OSError:
+        return []
+
+    def key(name):
+        match = STAGE_LOG.match(name)
+        return (int(match.group(1)), int(match.group(2) or 0), name)
+
+    return sorted((n for n in names if STAGE_LOG.match(n)), key=key, reverse=True)
+
+
+def _scan_log(path):
+    """The first error line of a log and whether it shows a crash."""
+    error_line = None
+    crashed = False
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                if error_line is None:
+                    match = ERROR_LINE.search(line)
+                    if match:
+                        error_line = match.group(0).strip()
+                if not crashed and CRASH_LINE.search(line):
+                    crashed = True
+                if error_line is not None and crashed:
+                    break
+    except OSError:
+        pass
+    return error_line, crashed
+
+
+def read_flow_outcome(report_dir, log_dir):
+    """The design's outcome from its flow-status.json and stage logs, or ``None``.
+
+    ``status`` is ``timeout`` when the time limit stopped the run, ``passed`` on
+    exit code 0, ``crash`` when the last stage log shows the tool died on a
+    signal, and ``error`` otherwise. A failed run also names the stage it ended
+    in and the first error line found in its logs, last stage first.
+    """
+    path = os.path.join(report_dir, STATUS_FILENAME)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            status = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"[WARN] Could not read {path}: {e}. Reporting no outcome.")
+        return None
+    if not isinstance(status, dict):
+        print(f"[WARN] {path} does not hold a JSON object. Reporting no outcome.")
+        return None
+
+    exit_code = status.get("exit_code")
+    timed_out = status.get("timed_out") is True
+    if not timed_out and not isinstance(exit_code, int):
+        print(f"[WARN] {path} has no exit_code. Reporting no outcome.")
+        return None
+
+    outcome = {}
+    for key in ("elapsed_minutes", "limit_minutes"):
+        value = status.get(key)
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value >= 0
+        ):
+            outcome[key] = value
+
+    if not timed_out and exit_code == 0:
+        outcome["status"] = "passed"
+        return outcome
+
+    logs = _stage_logs(log_dir)
+    if logs:
+        stage = _stage_name(logs[0])
+        if stage:
+            outcome["stage"] = stage
+
+    message = None
+    crashed = False
+    for i, name in enumerate(logs):
+        error_line, log_crashed = _scan_log(os.path.join(log_dir, name))
+        if i == 0:
+            crashed = log_crashed
+        if error_line:
+            message = error_line
+            break
+    if message:
+        outcome["message"] = message[:MAX_OUTCOME_MESSAGE]
+
+    if timed_out:
+        outcome["status"] = "timeout"
+    else:
+        outcome["status"] = "crash" if crashed else "error"
+    return outcome
+
+
+def _submodule_defect(entry):
+    """Describe why ``entry`` is not a usable submodule record, or ``None``.
+
+    Mirrors the keys the backend requires of every element of the v4
+    ``submodules`` array. ``overridden`` is checked for presence only: ``False``
+    is the common, valid case.
+    """
+    if not isinstance(entry, dict):
+        return "is not an object"
+
+    for key in ("path", "sha"):
+        value = entry.get(key)
+        if not isinstance(value, str) or not value.strip():
+            return f"has no {key}"
+
+    if entry.get("overridden") is None:
+        return "has no overridden"
+
+    return None
+
+
+def load_provenance(path):
+    """Return the build-provenance dict from ``path``, or ``None``.
+
+    A malformed or unreadable file degrades to v3 rather than failing the upload:
+    losing the whole metrics report over missing provenance would be a worse
+    outcome than losing the provenance.
+    """
+    if not path:
+        return None
+
+    # Relative paths are resolved against the caller's directory, not flow/.
+    if not os.path.isabs(path):
+        path = os.path.join(INVOCATION_DIR, path)
+
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        print(
+            f"[WARN] Could not read provenance file '{path}': {e}. "
+            "Falling back to v3."
+        )
+        return None
+
+    # json.load accepts any top-level JSON value: a file holding a list or a
+    # bare scalar parses fine, then .get() below raises AttributeError.
+    if not isinstance(data, dict):
+        print(
+            f"[WARN] Provenance file '{path}' does not contain a JSON object. "
+            "Falling back to v3."
+        )
+        return None
+
+    submodules = data.get("submodules")
+    library = data.get("jenkins_library")
+    if not isinstance(submodules, list) or not submodules:
+        print(f"[WARN] Provenance file '{path}' has no submodules. Falling back to v3.")
+        return None
+    if not isinstance(library, dict) or not library.get("ref"):
+        print(
+            f"[WARN] Provenance file '{path}' has no jenkins_library.ref. "
+            "Falling back to v3."
+        )
+        return None
+
+    # Every entry has to satisfy the backend's per-entry v4 keys, not just the
+    # array as a whole: one defective entry rejects the whole message, and the
+    # point of degrading to v3 is to not emit a message the backend will reject.
+    for i, entry in enumerate(submodules):
+        defect = _submodule_defect(entry)
+        if defect:
+            print(
+                f"[WARN] Provenance file '{path}': submodules[{i}] {defect}. "
+                "Falling back to v3."
+            )
+            return None
+
+    return {"jenkins_library": library, "submodules": submodules}
+
+
+def resolve_job_name(args):
+    """Canonical job name, or None when absent/blank."""
+    return args.jobName.strip() if args.jobName else None
+
+
+def resolve_schema_version(args, provenance):
+    """The schema version this run's payload satisfies.
+
+    v4 needs both a job name and provenance; the backend requires every v4 key,
+    so a run that could not capture its submodules must stay on v3 rather than
+    emit a v4 message the backend will reject.
+    """
+    if not resolve_job_name(args):
+        return 2
+    return 4 if provenance else 3
+
+
+def resolve_requester(args):
+    """Who asked for the build, as the payload keys the backend reads.
+
+    Each value comes from its flag or, when the flag is absent, from its
+    environment variable. An empty flag counts as given, so it suppresses the
+    variable. Blank values are left out rather than sent empty, and a value
+    without an "@" is dropped with a warning: an unset Groovy variable
+    interpolates as the string "null", which must not be stored as an email.
+    The keys ride on every schema version: the backend reads them by presence,
+    and they describe the build rather than the payload's shape, so they do
+    not bump the version.
+    """
+    requester = {}
+    for key, flag, value, env_var in (
+        (
+            "build_user_email",
+            "--buildUserEmail",
+            args.buildUserEmail,
+            "UPLOAD_BUILD_USER_EMAIL",
+        ),
+        (
+            "change_author_email",
+            "--changeAuthorEmail",
+            args.changeAuthorEmail,
+            "UPLOAD_CHANGE_AUTHOR_EMAIL",
+        ),
+    ):
+        if value is None:
+            value = os.environ.get(env_var, "")
+        value = value.strip()
+        if not value:
+            continue
+        if "@" not in value:
+            print(f"[WARN] Not sending {flag}: '{value}' is not an email address.")
+            continue
+        requester[key] = value
+    return requester
+
+
+def resolve_build_time(args):
+    """The build time to report, defaulting to now in genMetrics.py's format.
+
+    The default is UTC because the backend reads the value as UTC; local time
+    would shift the build by the agent's offset wherever that is not UTC.
+    """
+    if args.buildTime:
+        return args.buildTime
+    return datetime.now(timezone.utc).strftime(BUILD_TIME_FORMAT)
+
+
+def resolve_no_metrics_reason(args, design_records):
+    """The no_metrics_reason to send, and why a given reason is not sent.
+
+    Returns ``(reason, problem)``: ``reason`` is ``None`` unless it goes on the
+    payload, and ``problem`` describes a non-blank reason that was dropped.
+    """
+    reason = args.noMetricsReason.strip() if args.noMetricsReason else ""
+    if not reason:
+        return None, None
+    # A reason only describes a build that produced nothing; on a payload with
+    # designs it would contradict the metrics it carries.
+    if design_records:
+        return None, "design records were collected"
+    if len(reason) > MAX_NO_METRICS_REASON:
+        return None, f"it is longer than {MAX_NO_METRICS_REASON} characters"
+    return reason, None
+
+
+def build_pipeline_payload(
+    design_records, args, provenance=None, no_metrics_reason=None, requester=None
+):
+    """Return the pipeline-level payload dict.
+
+    Emits schema v2 (no job name), v3 (job name) or v4 (job name plus build
+    provenance) — see :func:`resolve_schema_version`.
+    """
+    job_name = resolve_job_name(args)
+    schema_version = resolve_schema_version(args, provenance)
+    payload = {
+        "payload_schema_version": schema_version,
         "jenkins_env": args.jenkinsEnv,
         "build_id": args.buildID,
         "branch_name": args.branchName,
@@ -230,34 +496,81 @@ def build_pipeline_payload(design_records, args):
         "change_branch": args.changeBranch,
         "commit_sha": args.commitSHA,
         "jenkins_url": args.jenkinsURL,
+        "build_time": resolve_build_time(args),
         "designs": design_records,
     }
+    if job_name:
+        payload["job_name"] = job_name
+    if args.expectedDesigns:
+        payload["design_count"] = args.expectedDesigns
+    if no_metrics_reason:
+        payload["no_metrics_reason"] = no_metrics_reason
+    # Only a v4 payload carries provenance. Provenance without a job name cannot
+    # be v4 (the backend requires job_name from v3 up), and attaching v4 keys to
+    # a message labelled v2 would make payload_schema_version stop describing
+    # the payload.
+    if schema_version == 4:
+        payload.update(provenance)
+    if requester:
+        payload.update(requester)
+    return payload
 
 
-def publish_pipeline_report(publisher, topic_path, message_data, design_count, args):
-    """Publish a pre-encoded v2 pipeline message."""
+def publish_pipeline_report(
+    publisher, topic_path, message_data, design_count, args, provenance=None
+):
+    """Publish a pre-encoded pipeline message (v2, v3 or v4)."""
     size_kb = len(message_data) / 1024
+    schema_version = str(resolve_schema_version(args, provenance))
     print(
-        f"[INFO] Publishing pipeline report ({design_count} designs, {size_kb:.1f} KB) to Pub/Sub."
+        f"[INFO] Publishing v{schema_version} pipeline report "
+        f"({design_count} designs, {size_kb:.1f} KB) to Pub/Sub."
     )
     future = publisher.publish(
         topic_path,
         data=message_data,
-        payload_schema_version="2",
+        payload_schema_version=schema_version,
         jenkins_env=args.jenkinsEnv,
     )
     message_id = future.result()
     print(f"[INFO] Published pipeline report to Pub/Sub (message ID: {message_id}).")
 
 
-def publish_v1_per_design(publisher, topic_path, design_records, args):
+def publish_v1_per_design(
+    publisher, topic_path, design_records, args, provenance=None, requester=None
+):
     """Fallback path used when the v2 pipeline payload exceeds MAX_PUBSUB_BYTES.
 
     Emits one v1-format message per design (no payload_schema_version, metrics
     flattened at the root), matching the legacy schema the ingestion service
-    still supports.
+    still supports. Returns the number of designs that failed to publish.
+
+    Provenance is mirrored onto every message: all of them resolve to the same
+    build, and the backend upserts components by path, so N copies converge on
+    one set of rows. Omitting it here would make an oversized nightly look like
+    a build with no overrides.
+
+    Unlike the pipeline payload this is not gated on the v4 job-name
+    requirement: a v1 message declares no schema version, so there is nothing
+    for the extra keys to contradict, and the backend reads provenance here by
+    key presence rather than by version.
+
+    design_count is left off: the backend reads every v1 root key it does not
+    list as metadata as a metric, and design_count is not on that list, so it
+    would surface as a bogus metric. build_time and no_metrics_reason are
+    metadata there but not needed: each design's metrics carry
+    run__flow__generate_date, which the backend prefers, and a reason only
+    applies to an empty build, whose payload is far below the size cap.
+
+    The requester keys go on after the metrics, so a metric that happened to
+    share their name could not replace who asked for the build.
+
+    A design's outcome rides at the root as ``outcome``. A design that has only
+    an outcome carries no metrics to name it, so its message names the design
+    with the same run__flow__ keys metadata.json would hold, dated by the build.
     """
     futures = []
+    failed = 0
     for d in design_records:
         payload = {
             "build_id": args.buildID,
@@ -267,9 +580,24 @@ def publish_v1_per_design(publisher, topic_path, design_records, args):
             "commit_sha": args.commitSHA,
             "jenkins_url": args.jenkinsURL,
             "jenkins_env": args.jenkinsEnv,
-            "rules": d["rules"],
         }
-        payload.update(d["metrics"])
+        if provenance:
+            payload.update(provenance)
+        if "metrics" in d:
+            payload.update(d["metrics"])
+        else:
+            payload.update(
+                {
+                    "run__flow__platform": d["platform"],
+                    "run__flow__design": d["design"],
+                    "run__flow__variant": d["variant"],
+                    "run__flow__generate_date": resolve_build_time(args),
+                }
+            )
+        if "outcome" in d:
+            payload["outcome"] = d["outcome"]
+        if requester:
+            payload.update(requester)
 
         message_data = json.dumps(payload, default=str).encode("utf-8")
         try:
@@ -280,8 +608,9 @@ def publish_v1_per_design(publisher, topic_path, design_records, args):
             )
             futures.append((d, future))
         except Exception as e:
+            failed += 1
             print(
-                f"[WARN] Pub/Sub v1 fallback publish failed for "
+                f"[ERROR] Pub/Sub v1 fallback publish failed for "
                 f"{d['platform']} {d['design']} {d['variant']}: {e}"
             )
 
@@ -293,30 +622,16 @@ def publish_v1_per_design(publisher, topic_path, design_records, args):
                 f"{d['platform']} {d['design']} {d['variant']}."
             )
         except Exception as e:
+            failed += 1
             print(
-                f"[WARN] Pub/Sub v1 fallback publish failed for "
+                f"[ERROR] Pub/Sub v1 fallback publish failed for "
                 f"{d['platform']} {d['design']} {d['variant']}: {e}"
             )
+    return failed
 
 
 # --- END PUBSUB ---
 
-
-def get_rules(dataFile):
-    data = {}
-    if os.path.exists(dataFile):
-        with open(dataFile) as f:
-            data = json.load(f)
-
-    return data
-
-
-# --- FIRESTORE init (remove when deprecating) ---
-db = None
-if args.cred:
-    firebase_admin.initialize_app(credentials.Certificate(args.cred))
-    db = firestore.client()
-# --- END FIRESTORE init ---
 
 # --- PUBSUB init ---
 publisher = None
@@ -352,50 +667,86 @@ for reportDir, dirs, files in sorted(os.walk("reports", topdown=False)):
     platform = dirList[1]
     design = dirList[2]
     variant = dirList[3]
-    dataFile = os.path.join(reportDir, RUN_FILENAME)
-    if not os.path.exists(dataFile):
-        print(f"[WARN] No data file for {platform} {design} {variant}.")
-        continue
     if platform == "sky130hd_fakestack" or platform == "src":
         print(f"[WARN] Skiping upload {platform} {design} {variant}.")
         continue
-    print(f"[INFO] Get rules for {platform} {design} {variant}.")
-    rules = get_rules(
-        os.path.join("designs", platform, design, f"rules-{variant}.json")
+    dataFile = os.path.join(reportDir, RUN_FILENAME)
+    if not os.path.exists(dataFile):
+        dataFile = None
+    outcome = read_flow_outcome(
+        reportDir, os.path.join("logs", platform, design, variant)
     )
-
-    # --- FIRESTORE (remove when deprecating) ---
-    if db:
-        print(f"[INFO] Upload data for {platform} {design} {variant}.")
-        upload_data(db, dataFile, platform, design, variant, args, rules)
-    # --- END FIRESTORE ---
-
+    if dataFile is None and outcome is None:
+        print(f"[WARN] No data file for {platform} {design} {variant}.")
+        continue
+    if dataFile is None:
+        print(
+            f"[INFO] No data file for {platform} {design} {variant}; "
+            f"reporting its {outcome['status']} outcome only."
+        )
     # --- PUBSUB ---
     if publisher:
         design_records.append(
-            build_design_record(dataFile, platform, design, variant, rules)
+            build_design_record(dataFile, platform, design, variant, outcome)
         )
     # --- END PUBSUB ---
 
 # --- PUBSUB ---
-if publisher and design_records:
-    payload = build_pipeline_payload(design_records, args)
+# A failed publish exits non-zero. A warning alone let CI builds pass while the
+# QoR dashboard stopped receiving results, which froze the baseline that later
+# builds are compared against.
+#
+# A build where no design produced metrics still publishes, with an empty
+# designs list, so the dashboard lists it as a build without metrics instead of
+# leaving it out.
+if publisher:
+    if not design_records:
+        print(
+            "[WARN] No design records were collected. Publishing an empty "
+            "(no-metrics) pipeline report."
+        )
+    no_metrics_reason, reason_problem = resolve_no_metrics_reason(args, design_records)
+    if reason_problem:
+        print(f"[WARN] Ignoring --noMetricsReason because {reason_problem}.")
+    provenance = load_provenance(args.provenanceFile)
+    requester = resolve_requester(args)
+    payload = build_pipeline_payload(
+        design_records, args, provenance, no_metrics_reason, requester
+    )
     message_data = json.dumps(payload, default=str).encode("utf-8")
 
     if len(message_data) > MAX_PUBSUB_BYTES:
         print(
-            f"[WARN] v2 payload size {len(message_data) / 1024:.1f} KB exceeds "
+            f"[WARN] Payload size {len(message_data) / 1024:.1f} KB exceeds "
             f"{MAX_PUBSUB_BYTES // 1024} KB cap. Falling back to v1 per-design publish "
             f"({len(design_records)} messages)."
         )
-        publish_v1_per_design(publisher, topic_path, design_records, args)
+        if args.expectedDesigns:
+            print(
+                "[WARN] --expectedDesigns is not sent on the v1 fallback; the "
+                "backend will report this build's completeness as unknown."
+            )
+        failed = publish_v1_per_design(
+            publisher, topic_path, design_records, args, provenance, requester
+        )
+        if failed:
+            print(
+                f"[ERROR] {failed} of {len(design_records)} designs were not published."
+            )
+            sys.exit(1)
     else:
         try:
             publish_pipeline_report(
-                publisher, topic_path, message_data, len(design_records), args
+                publisher,
+                topic_path,
+                message_data,
+                len(design_records),
+                args,
+                provenance,
             )
         except Exception as e:
-            print(f"[WARN] Pub/Sub publish failed for pipeline report: {e}")
-elif publisher and not design_records:
-    print("[WARN] Pub/Sub publisher initialized but no design records were collected.")
+            print(f"[ERROR] Pub/Sub publish failed for pipeline report: {e}")
+            sys.exit(1)
+        if not design_records:
+            print("[INFO] Published an empty (no-metrics) pipeline report.")
 # --- END PUBSUB ---

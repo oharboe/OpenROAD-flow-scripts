@@ -97,13 +97,14 @@ export IO_PLACER_H ?= met3
 export IO_PLACER_V ?= met2
 
 # Define default PDN config
+export GLOBAL_CONNECT_TCL ?= $(PLATFORM_DIR)/global_connect.tcl
 export PDN_TCL ?= $(PLATFORM_DIR)/pdn.tcl
 
 # Endcap and Welltie cells
 export TAP_CELL_NAME = sky130_fd_sc_hd__tapvpwrvgnd_1
 export TAPCELL_TCL ?= $(PLATFORM_DIR)/tapcell.tcl
 
-export MACRO_PLACE_HALO ?= 40 40
+export RTLMP_MIN_CHANNEL_SIZE ?= 80 80
 
 #---------------------------------------------------------
 # Place
@@ -117,6 +118,8 @@ export PLACE_DENSITY ?= 0.60
 export MIN_ROUTING_LAYER ?= met1
 export MIN_CLK_ROUTING_LAYER ?= met3
 export MAX_ROUTING_LAYER ?= met5
+
+export OPT_POST_GRT_WNS ?= 0
 
 #
 # Define fastRoute tcl

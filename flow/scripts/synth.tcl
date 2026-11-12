@@ -58,10 +58,23 @@ if { [env_var_exists_and_non_empty SYNTH_CHECKPOINT] } {
 #     the checkpoint.  In synth_preamble.tcl a single design is being
 #     synthesised, so an unknown name is almost certainly a user typo and
 #     should fail loudly — `blackbox $m` without `catch` is intentional.
-if { [env_var_exists_and_non_empty SYNTH_BLACKBOXES] } {
-  foreach m $::env(SYNTH_BLACKBOXES) {
-    catch { blackbox $m }
+#
+# An orchestrator with thousands of kept modules gives the list in a file
+# instead, SYNTH_BLACKBOXES_FILE, one name per line: Linux caps one
+# environment string at 128 KiB, and 2,250 names are 206 KB.
+set synth_blackboxes [env_var_or_empty SYNTH_BLACKBOXES]
+if { [env_var_exists_and_non_empty SYNTH_BLACKBOXES_FILE] } {
+  set fid [open $::env(SYNTH_BLACKBOXES_FILE) r]
+  while { [gets $fid line] >= 0 } {
+    set m [string trim $line]
+    if { $m ne "" } {
+      lappend synth_blackboxes $m
+    }
   }
+  close $fid
+}
+foreach m $synth_blackboxes {
+  catch { blackbox $m }
 }
 
 hierarchy -check -top $::env(DESIGN_NAME)
@@ -88,6 +101,15 @@ if { [env_var_exists_and_non_empty SYNTH_KEEP_MODULES] } {
     # `-module <name>` would error if the module doesn't exist, which
     # is why we use bare patterns instead.
     select "$module" "$module\\\$*"
+    # In a partition (SYNTH_CHECKPOINT set) a kept module of another
+    # partition is not in this partition's checkpoint: the selection is
+    # empty and setattr below marks nothing.
+    if {
+      ![env_var_exists_and_non_empty SYNTH_CHECKPOINT]
+      && [string trim [tee -q -s result.string select -list]] eq ""
+    } {
+      error "SYNTH_KEEP_MODULES: no module $module in the design"
+    }
     setattr -mod -set keep_hierarchy 1
     select -clear
   }
@@ -104,7 +126,7 @@ if { [env_var_exists_and_non_empty SYNTH_OPERATIONS_ARGS] } {
   set synth_full_args [concat $synth_full_args \
     "-extra-map $::env(FLOW_HOME)/platforms/common/lcu_kogge_stone.v"]
 }
-if { [env_var_exists_and_non_empty SYNTH_OPT_HIER] } {
+if { [env_var_equals SYNTH_OPT_HIER 1] } {
   set synth_full_args [concat $synth_full_args -hieropt]
 }
 
@@ -143,38 +165,28 @@ if {
   synth -flatten -run coarse:fine {*}$synth_full_args
 }
 
+# Resolve internal tristates left by the slang frontend ---
+if { [env_var_equals SYNTH_HDL_FRONTEND slang] } {
+  tribuf -logic
+  opt_clean
+}
 
+# Fail early if this synthesis run is doomed
+set mocked [synth_memory_max_bits $::env(SYNTH_MEMORY_MAX_BITS) \
+  $::env(SYNTH_MOCK_LARGE_MEMORIES) $::env(SYNTH_KEEP_MOCKED_MEMORIES)]
 if { $::env(SYNTH_MOCK_LARGE_MEMORIES) } {
-  memory_collect
-  set select [tee -q -s result.string select -list t:\$mem_v2]
   set report_file [open $::env(REPORTS_DIR)/synth_mocked_memories.txt "w"]
-  foreach path [split [string trim $select] "\n"] {
-    set index [string first "/" $path]
-    set module [string range $path 0 [expr { $index - 1 }]]
-    set instance [string range $path [expr { $index + 1 }] end]
-
-    set width [rtlil::get_param -uint $module $instance WIDTH]
-    set size [rtlil::get_param -uint $module $instance SIZE]
-    set nbits [expr $width * $size]
-    puts "Memory $path has dimensions $size x $width = $nbits"
-    if { $nbits > $::env(SYNTH_MEMORY_MAX_BITS) } {
-      rtlil::set_param -uint $module $instance SIZE 1
-      puts "Shrunk memory $path from $size rows to 1"
-      puts -nonewline $report_file "$module:\n  width: $width\n  size: $size\n"
-      if { $::env(SYNTH_KEEP_MOCKED_MEMORIES) } {
-        select -module $module
-        setattr -mod -set keep_hierarchy 1
-        select -clear
-      }
-    }
+  foreach memory $mocked {
+    lassign $memory module width size
+    puts -nonewline $report_file "$module:\n  width: $width\n  size: $size\n"
   }
   close $report_file
 }
 
-json -o $::env(RESULTS_DIR)/mem.json
-# Run report and check here so as to fail early if this synthesis run is doomed
-exec -- $::env(PYTHON_EXE) $::env(SCRIPTS_DIR)/mem_dump.py \
-  --max-bits $::env(SYNTH_MEMORY_MAX_BITS) $::env(RESULTS_DIR)/mem.json
+# A yosys backend sorts the design by name before it writes, and the passes
+# below depend on that order; json -o mem.json did it here. The sort stays,
+# the file goes: dropping the sort changes results and is its own change.
+write_json /dev/null
 
 if { [env_var_exists_and_non_empty SYNTH_RETIME_MODULES] } {
   select {*}$::env(SYNTH_RETIME_MODULES)
@@ -187,10 +199,10 @@ if { [env_var_exists_and_non_empty SYNTH_RETIME_MODULES] } {
 }
 
 if {
-  [env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] ||
-  [env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]
+  [env_var_equals SYNTH_WRAPPED_OPERATORS 1] ||
+  [env_var_equals SWAP_ARITH_OPERATORS 1]
 } {
-  source $::env(SCRIPTS_DIR)/synth_wrap_operators.tcl
+  log_cmd source $::env(SCRIPTS_DIR)/synth_wrap_operators.tcl
 } else {
   synth -top $::env(DESIGN_NAME) -run fine: -noabc {*}$synth_full_args
 }
@@ -211,10 +223,10 @@ opt -purge
 if {
   [env_var_exists_and_non_empty ADDER_MAP_FILE] &&
   (
-    (![env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] &&
-      ![env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]) ||
-    (([env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] ||
-        [env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]) &&
+    (![env_var_equals SYNTH_WRAPPED_OPERATORS 1] &&
+      ![env_var_equals SWAP_ARITH_OPERATORS 1]) ||
+    (([env_var_equals SYNTH_WRAPPED_OPERATORS 1] ||
+        [env_var_equals SWAP_ARITH_OPERATORS 1]) &&
       ![design_has_extracted_operators])
   )
 } {
@@ -229,7 +241,32 @@ if {
 
 # Technology mapping of latches
 if { [env_var_exists_and_non_empty LATCH_MAP_FILE] } {
+  # Legalize async set/reset latches into the latches this map file provides
+  # (soft-logic emulation); the trailing selection keeps dfflegalize off FFs.
+  dfflegalize {*}[get_dfflegalize_args $::env(LATCH_MAP_FILE)] {t:$_DLATCH_*}
   techmap -map $::env(LATCH_MAP_FILE)
+}
+
+# Clock gate inference.
+if { [env_var_equals INFER_CLKGATES 1] } {
+  set clkgate_args {}
+  if {
+    [env_var_exists_and_non_empty POS_CLKGATE_AND_PORTS] ||
+    [env_var_exists_and_non_empty NEG_CLKGATE_AND_PORTS]
+  } {
+    if { [env_var_exists_and_non_empty POS_CLKGATE_AND_PORTS] } {
+      lappend clkgate_args "-pos"
+      lappend clkgate_args {*}$::env(POS_CLKGATE_AND_PORTS)
+    }
+    if { [env_var_exists_and_non_empty NEG_CLKGATE_AND_PORTS] } {
+      lappend clkgate_args "-neg"
+      lappend clkgate_args {*}$::env(NEG_CLKGATE_AND_PORTS)
+    }
+  } else {
+    # Let yosys decide on which clock gating cell to use
+    lappend clkgate_args {*}$lib_args
+  }
+  log_cmd clockgate {*}$clkgate_args
 }
 
 # Technology mapping of flip-flops
@@ -249,13 +286,18 @@ opt
 setundef -zero
 
 if {
-  ![env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] &&
-  ![env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]
+  ![env_var_equals SYNTH_WRAPPED_OPERATORS 1] &&
+  ![env_var_equals SWAP_ARITH_OPERATORS 1]
 } {
   log_cmd abc {*}$abc_args
 } else {
+  # Not dead code: abc_new mistakes the "-script" in /OpenROAD-flow-scripts/...
+  # paths for a given -script and drops its default (YosysHQ/yosys#6320).
   scratchpad -set abc9.script $::env(SCRIPTS_DIR)/abc_speed_gia_only.script
-  # crop out -script from arguments
+  # abc_new maps each arithmetic operator module with the abc9_script
+  # attribute synth_wrap_operators.tcl sets on it, and every other module
+  # with the script above. An explicit -script overrides both, so it is
+  # cropped from the arguments and ABC_SCRIPT does not apply here.
   set abc_args [lrange $abc_args 2 end]
   log_cmd abc_new {*}$abc_args
   delete {t:$specify*}
@@ -286,8 +328,8 @@ tee -o $::env(REPORTS_DIR)/synth_stat.txt stat -hierarchy {*}$lib_args
 # check the design is composed exclusively of target cells, and
 # check for other problems
 if {
-  ![env_var_exists_and_non_empty SYNTH_WRAPPED_OPERATORS] &&
-  ![env_var_exists_and_non_empty SWAP_ARITH_OPERATORS]
+  ![env_var_equals SYNTH_WRAPPED_OPERATORS 1] &&
+  ![env_var_equals SWAP_ARITH_OPERATORS 1]
 } {
   check -assert -mapped
 } else {
@@ -297,9 +339,13 @@ if {
   check -assert
 }
 
+if { $::env(SYNTH_REPEATABLE_BUILD) } {
+  # techmap re-attaches src attributes that point into the techmap library,
+  # after synth_canonicalize.tcl stripped them; strip again so the netlist
+  # carries no build paths.
+  setattr -unset src *
+  setattr -mod -unset src *
+}
+
 # Write synthesized design
 write_verilog -nohex -nodec $::env(RESULTS_DIR)/1_2_yosys.v
-# One day a more sophisticated synthesis will write out a modified
-# .sdc file after synthesis. For now, just copy the input .sdc file,
-# making synthesis more consistent with other stages.
-log_cmd exec cp $::env(SDC_FILE) $::env(RESULTS_DIR)/1_synth.sdc
