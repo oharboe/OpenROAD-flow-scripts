@@ -39,6 +39,13 @@ endif
 
 include $(PLATFORM_DIR)/config.mk
 
+# defaults.py below runs with PYTHON_EXE, so set it first. See the dragons
+# comment near "setup all commands used within this flow" for why.
+ifeq ($(origin PYTHON_EXE), undefined)
+  PYTHON_EXE := $(shell command -v python3)
+endif
+export PYTHON_EXE
+
 # __SPACE__ is a workaround for whitespace hell in "foreach"; there
 # is no way to escape space in defaults.py and get "foreach" to work.
 $(foreach line,$(shell $(PYTHON_EXE) $(SCRIPTS_DIR)/defaults.py),$(eval export $(subst __SPACE__, ,$(line))))
@@ -47,6 +54,11 @@ export LOG_DIR     = $(WORK_HOME)/logs/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VAR
 export OBJECTS_DIR = $(WORK_HOME)/objects/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
 export REPORTS_DIR = $(WORK_HOME)/reports/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
 export RESULTS_DIR = $(WORK_HOME)/results/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
+# Where a stage reads the previous stage's result.
+export FLOW_INPUT_VARIANT ?= $(FLOW_VARIANT)
+export INPUT_RESULTS_DIR = $(WORK_HOME)/results/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_INPUT_VARIANT)
+# Where AUTO_MEMORIES' generated views are written and read.
+export AUTO_MEMORIES_DIR ?= $(RESULTS_DIR)/memories
 
 #-------------------------------------------------------------------------------
 ifeq (,$(strip $(NUM_CORES)))
@@ -71,40 +83,47 @@ export NUM_CORES
 #-------------------------------------------------------------------------------
 # setup all commands used within this flow
 #
-# HERE BE DRAGONS: use bare `export VAR`, never `export VAR := $(VAR)`.
+# Nix and Bazel (or whatever else environment) should explicitly set the
+# variables OPENROAD_EXE, OPENSTA_EXE, YOSYS_EXE and PYTHON_EXE to point to
+# installed tools. If those are not defined, tools built by ORFS are used and
+# referred to by absolute paths.
 #
-# `export VAR := $(VAR)` rebinds the variable to origin "file", which makes
-# get_variables (below) include it in UNSET_VARIABLES_NAMES. UNSET_AND_MAKE
-# then unsets it before the sub-make runs, so any `?=` fallback here fires
-# with the wrong value in the sub-make (e.g. the in-tree tools/install path
-# that does not exist in a Bazel sandbox). A bare `export` preserves the
-# original origin (environment when bazel-orfs supplies it, file when the
-# local default fills in), so the value survives UNSET_VARS.
-PYTHON_EXE ?= $(shell command -v python3)
-export PYTHON_EXE
+# Avoid exporting deferred shell commands, for example something like
+#
+#   export PYTHON_EXE ?= $(shell command -v python3)
+#
+# causes Make to start up a new shell whenever PYTHON_EXE is expanded. An
+# annoying side-effect of this is that whenever a shell is launched, all
+# exported variables are expanded, which causes PYTHON_EXE to launch a shell,
+# which causes other exported variables to be expanded, and if those launch
+# shells, PYTHON_EXE is re-expanded which launches a shell, and so on.
+#
+# This is not an infinite loop, as there are rules in place to stop expansion
+# under certain circumstances, but the effect is nonetheless cumulative.
+# Previous versions of this file caused ~28k shell instances to be spawned for
+# `make DESIGN_CONFIG=... clean_all`, which could be reduced to 41.
+#
+# The 'obvious' solution here is to just run each shell command once by forcing
+# an immediate expansion with `:=`, something like
+#
+#   PYTHON_EXE ?= $(shell command -v python3)
+#   export PYTHON_EXE := $(PYTHON_EXE)
+#
+# but this changes 'where' PYTHON_EXE was defined, command line/environment
+# versus in a file, which messes with `get_variables` and causes command
+# line/environment variables to not be propagated to submakes.
+#
+# Python is not built by ORFS, and as such its absolute path has to be fetched
+# from the environment. Use `ifeq ($(origin PYTHON_EXE), undefined)` to check if
+# the variable hasn't been defined yet and run a single shell instance to fetch
+# the absolute path if so. That is done further up, before defaults.py runs.
+# The other tools should've been built by ORFS, and can use a pre-specified
+# path, which we can just use ?= for.
 
 export RUN_CMD = $(PYTHON_EXE) $(FLOW_HOME)/scripts/run_command.py
 
-# The following determine the executable location for each tool used by this flow.
-# Priority is given to
-#       1 user explicit set with variable in Makefile or command line, for instance setting OPENROAD_EXE
-#       2 either
-#          2.1 if in Nix shell: openroad, yosys from the environment
-#          2.2 ORFS compiled tools: openroad, yosys
-ifneq (${IN_NIX_SHELL},)
-  OPENROAD_EXE ?= $(shell command -v openroad)
-else
-  OPENROAD_EXE ?= $(abspath $(FLOW_HOME)/../tools/install/OpenROAD/bin/openroad)
-endif
-ifneq (${IN_NIX_SHELL},)
-  OPENSTA_EXE ?= $(shell command -v sta)
-else
-  OPENSTA_EXE ?= $(abspath $(FLOW_HOME)/../tools/install/OpenROAD/bin/sta)
-endif
-
-# See dragons comment near PYTHON_EXE: bare `export`, not `export VAR := $(VAR)`.
-export OPENROAD_EXE
-export OPENSTA_EXE
+export OPENROAD_EXE ?= $(abspath $(FLOW_HOME)/../tools/install/OpenROAD/bin/openroad)
+export OPENSTA_EXE  ?= $(abspath $(FLOW_HOME)/../tools/install/OpenROAD/bin/sta)
 
 OPENROAD_IS_VALID := $(if $(OPENROAD_EXE),$(shell test -x $(OPENROAD_EXE) && echo "true"),)
 
@@ -114,14 +133,7 @@ export OPENROAD_NO_EXIT_CMD = $(OPENROAD_EXE) $(OPENROAD_ARGS)
 export OPENROAD_GUI_CMD = $(OPENROAD_EXE) -gui -threads $(NUM_CORES) $(OR_ARGS)
 export OPENROAD_WEB_CMD = $(OPENROAD_EXE) -web -threads $(NUM_CORES) $(OR_ARGS)
 
-ifneq (${IN_NIX_SHELL},)
-  YOSYS_EXE ?= $(shell command -v yosys)
-else
-  YOSYS_EXE ?= $(abspath $(FLOW_HOME)/../tools/install/yosys/bin/yosys)
-endif
-
-# See dragons comment near PYTHON_EXE: bare `export`, not `export VAR := $(VAR)`.
-export YOSYS_EXE
+export YOSYS_EXE ?= $(abspath $(FLOW_HOME)/../tools/install/yosys/bin/yosys)
 
 YOSYS_IS_VALID := $(if $(YOSYS_EXE),$(shell test -x $(YOSYS_EXE) && echo "true"),)
 
