@@ -2,7 +2,7 @@ source $::env(SCRIPTS_DIR)/util.tcl
 
 source $::env(SCRIPTS_DIR)/report_metrics.tcl
 
-proc load_design { design_file sdc_file } {
+proc load_design { design_file } {
   # Do not reload if design is already loaded
   set db [ord::get_db]
   if { [$db getChip] != "NULL" && [[$db getChip] getBlock] != "NULL" } {
@@ -38,8 +38,7 @@ proc load_design { design_file sdc_file } {
     error "Unrecognized input file $design_file"
   }
 
-  # Read SDC file
-  log_cmd read_sdc $::env(RESULTS_DIR)/$sdc_file
+  log_cmd read_sdc $::env(RESULTS_DIR)/[sdc_file_of $design_file]
 
   if { [file exists $::env(PLATFORM_DIR)/derate.tcl] } {
     log_cmd source $::env(PLATFORM_DIR)/derate.tcl
@@ -49,6 +48,11 @@ proc load_design { design_file sdc_file } {
     log_cmd source $::env(LAYER_PARASITICS_FILE)
   } else {
     log_cmd source $::env(PLATFORM_DIR)/setRC.tcl
+  }
+
+  if { [env_var_exists_and_non_empty WIRE_LOAD_MODEL] } {
+    # OpenSTA applies a wire-load model only to nets without parasitics.
+    log_cmd set_wire_load_model -name $::env(WIRE_LOAD_MODEL)
   }
 
   if { [env_var_equals LIB_MODEL CCS] } {
