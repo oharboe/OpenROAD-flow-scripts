@@ -204,8 +204,8 @@ do-klayout:
 		--template $(KLAYOUT_TECH_FILE) \
 		--output $(OBJECTS_DIR)/klayout.lyt \
 		--lef-files $(OBJECTS_DIR)/klayout_tech.lef $(SC_LEF) $(ADDITIONAL_LEFS) \
-		  $(if $(filter 1,$(AUTO_MEMORIES)),$(wildcard $(RESULTS_DIR)/memories/*.lef)) \
-		--map-files $(wildcard $(FLOW_HOME)/platforms/$(PLATFORM)/*map)
+		--map-files $(wildcard $(FLOW_HOME)/platforms/$(PLATFORM)/*map) \
+		$(if $(filter 1,$(AUTO_MEMORIES)),--blackboxes $(AUTO_MEMORIES_DIR)/blackboxes.txt)
 
 $(OBJECTS_DIR)/klayout_wrap.lyt: $(KLAYOUT_TECH_FILE) $(OBJECTS_DIR)/klayout_tech.lef
 	$(UNSET_AND_MAKE) do-klayout_wrap
@@ -284,9 +284,13 @@ $(RESULTS_DIR)/memories.json: $(RESULTS_DIR)/memories_inferred.json $(ADDITIONAL
 
 yosys-dependencies: $(RESULTS_DIR)/memories.json
 $(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil: $(RESULTS_DIR)/memories.json
+$(RESULTS_DIR)/memories/blackboxes.txt: $(RESULTS_DIR)/memories.json ;
 # The generated LEFs are part of the KLayout technology the GDS merge
-# reads the final DEF with.
-$(OBJECTS_DIR)/klayout.lyt: $(RESULTS_DIR)/memories.json
+# reads the final DEF with. Synthesis writes its own memories;
+# AUTO_MEMORIES_DIR is where the stages after it read them, as
+# INPUT_RESULTS_DIR is where a stage reads its input, and another
+# variant's blackboxes.txt has no rule here.
+$(OBJECTS_DIR)/klayout.lyt: $(AUTO_MEMORIES_DIR)/blackboxes.txt
 endif
 
 # OpenROAD stages read binary liberty (.blib) files from a cache shared by
@@ -452,7 +456,7 @@ endef
 # ==============================================================================
 
 # Custom target to go from synthesis to placement in a single OpenROAD run
-$(eval $(call do-step,1_3_floorplan_to_place, $(RESULTS_DIR)/1_synth.odb,floorplan_to_place))
+$(eval $(call do-step,1_3_floorplan_to_place, $(INPUT_RESULTS_DIR)/1_synth.odb,floorplan_to_place))
 
 $(eval $(call OPEN_GUI_SHORTCUT,yosys,1_2_yosys.v))
 
@@ -488,7 +492,7 @@ ifneq ($(filter 1,$(LEC_CHECK) $(SEC_CHECK)),)
 $(RESULTS_DIR)/1_synth_lec.v: | check-kepler-formal
 endif
 
-$(eval $(call do-step,2_1_floorplan,$(RESULTS_DIR)/1_synth.odb $(TECH_LEF) $(SC_LEF) $(ADDITIONAL_LEFS) $(FOOTPRINT) $(SIG_MAP_FILE) $(FOOTPRINT_TCL) $(LIB_FILES) $(IO_CONSTRAINTS),floorplan))
+$(eval $(call do-step,2_1_floorplan,$(INPUT_RESULTS_DIR)/1_synth.odb $(TECH_LEF) $(SC_LEF) $(ADDITIONAL_LEFS) $(FOOTPRINT) $(SIG_MAP_FILE) $(FOOTPRINT_TCL) $(LIB_FILES) $(IO_CONSTRAINTS),floorplan))
 
 # STEP 2: Macro Placement
 #-------------------------------------------------------------------------------
@@ -526,7 +530,7 @@ place: $(RESULTS_DIR)/3_place.odb
 # ==============================================================================
 # STEP 1: Global placement without placed IOs, timing-driven, and routability-driven.
 #-------------------------------------------------------------------------------
-$(eval $(call do-step,3_1_place_gp_skip_io,$(RESULTS_DIR)/2_floorplan.odb $(LIB_FILES),global_place_skip_io))
+$(eval $(call do-step,3_1_place_gp_skip_io,$(INPUT_RESULTS_DIR)/2_floorplan.odb $(LIB_FILES),global_place_skip_io))
 
 $(eval $(call do-step,3_2_place_iop,$(RESULTS_DIR)/3_1_place_gp_skip_io.odb,io_placement))
 
@@ -580,7 +584,7 @@ ifeq ($(LEC_CHECK),1)
 DO_STEP_DEPS_4_1_cts += check-kepler-formal
 endif
 
-$(eval $(call do-step,4_1_cts,$(RESULTS_DIR)/3_place.odb,cts))
+$(eval $(call do-step,4_1_cts,$(INPUT_RESULTS_DIR)/3_place.odb,cts))
 
 ifeq ($(LEC_CHECK),1)
 $(RESULTS_DIR)/4_1_cts.odb: | check-kepler-formal
@@ -618,11 +622,11 @@ grt: $(RESULTS_DIR)/5_1_grt.odb
 
 # STEP 1: Run global route
 #-------------------------------------------------------------------------------
-$(eval $(call do-step,5_1_grt,$(RESULTS_DIR)/4_cts.odb $(FASTROUTE_TCL) $(PRE_GLOBAL_ROUTE_TCL),global_route))
+$(eval $(call do-step,5_1_grt,$(INPUT_RESULTS_DIR)/4_cts.odb $(FASTROUTE_TCL) $(PRE_GLOBAL_ROUTE_TCL),global_route))
 
 # STEP 2: Run detailed route
 #-------------------------------------------------------------------------------
-$(eval $(call do-step,5_2_route,$(RESULTS_DIR)/5_1_grt.odb,detail_route))
+$(eval $(call do-step,5_2_route,$(INPUT_RESULTS_DIR)/5_1_grt.odb,detail_route))
 
 $(eval $(call do-step,5_3_fillcell,$(RESULTS_DIR)/5_2_route.odb,fillcell))
 
@@ -680,7 +684,7 @@ elapsed:
 elapsed-all:
 	@$(PYTHON_EXE) $(UTILS_DIR)/genElapsedTime.py -d $(shell find $(WORK_HOME)/logs/$(PLATFORM)/*/*/ -type d)
 
-$(eval $(call do-step,6_1_fill,$(RESULTS_DIR)/5_route.odb $(FILL_CONFIG),density_fill))
+$(eval $(call do-step,6_1_fill,$(INPUT_RESULTS_DIR)/5_route.odb $(FILL_CONFIG),density_fill))
 
 ifneq ($(filter 1,$(LEC_CHECK) $(SEC_CHECK)),)
 DO_STEP_DEPS_6_report += check-kepler-formal
