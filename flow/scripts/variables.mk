@@ -54,6 +54,12 @@ export LOG_DIR     = $(WORK_HOME)/logs/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VAR
 export OBJECTS_DIR = $(WORK_HOME)/objects/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
 export REPORTS_DIR = $(WORK_HOME)/reports/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
 export RESULTS_DIR = $(WORK_HOME)/results/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
+# Where a stage reads the previous stage's result.
+export FLOW_INPUT_VARIANT ?= $(FLOW_VARIANT)
+export INPUT_RESULTS_DIR = $(WORK_HOME)/results/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_INPUT_VARIANT)
+# Where the stages after synthesis read AUTO_MEMORIES' generated views;
+# synthesis writes them to its own $(RESULTS_DIR)/memories.
+export AUTO_MEMORIES_DIR ?= $(RESULTS_DIR)/memories
 
 #-------------------------------------------------------------------------------
 ifeq (,$(strip $(NUM_CORES)))

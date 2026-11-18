@@ -29,12 +29,22 @@ into `$(RESULTS_DIR)/memories_inferred.json`, and
 
 Synthesis (canonicalization) blackboxes the converted modules so the
 liberty view wins over their behavioral bodies; floorplan through final
-read the generated `.lib`/`.lef` alongside `ADDITIONAL_LIBS`/
-`ADDITIONAL_LEFS`. Everything downstream keys off the files above —
-nothing else passes between the generator and the flow. That file-based
-handoff is what lets build systems (e.g. bazel-orfs) declare the
-generated artifacts as ordinary stage outputs and transitive
-dependencies of the remaining stages.
+read the `<m>.lib`/`<m>.lef` of each module `blackboxes.txt` lists,
+alongside `ADDITIONAL_LIBS`/`ADDITIONAL_LEFS`. Everything downstream keys
+off the files above, by the names the lists give: a file in `memories/`
+that no list names is not read, and a list that is missing stops the
+step that reads it. Nothing else passes between the generator and the
+flow. That file-based handoff is what lets build systems (e.g.
+bazel-orfs) declare the generated artifacts as ordinary stage outputs
+and transitive dependencies of the remaining stages.
+
+Synthesis writes the views and lists to its own
+`$(RESULTS_DIR)/memories` and reads them there. The stages after it read
+them from `AUTO_MEMORIES_DIR`, which defaults to that directory, as a
+stage reads its input from `INPUT_RESULTS_DIR`. A variant whose stages
+run on another variant's synthesis, with `FLOW_INPUT_VARIANT` naming it,
+sets `AUTO_MEMORIES_DIR` to that variant's `memories` directory for
+every stage it runs.
 
 Memories that are *not* converted stay in the netlist and synthesize to
 flip-flops, like any other RTL.
