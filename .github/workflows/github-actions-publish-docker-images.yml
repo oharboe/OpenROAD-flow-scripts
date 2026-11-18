@@ -33,7 +33,7 @@ jobs:
 
       - name: Login to GitHub Container Registry (GHCR)
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
         with:
           registry: ghcr.io
           username: gha
@@ -53,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [["ubuntu22.04", "ubuntu:22.04"]]
+        os: [["ubuntu26.04", "ubuntu:26.04"], ["ubuntu24.04", "ubuntu:24.04"]]
     runs-on: ${{ vars.USE_SELF_HOSTED == 'true' && 'self-hosted-ubuntu-26.04' || 'ubuntu-26.04' }}
     steps:
       - name: Check out repository code
@@ -71,7 +71,7 @@ jobs:
 
       - name: Login to GitHub Container Registry (GHCR)
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
         with:
           registry: ghcr.io
           username: gha
@@ -97,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu22.04"]
+        os: ["ubuntu26.04", "ubuntu24.04"]
     runs-on: ${{ vars.USE_SELF_HOSTED == 'true' && 'self-hosted-ubuntu-26.04' || 'ubuntu-26.04' }}
     steps:
       - name: Free Disk Space
@@ -123,7 +123,7 @@ jobs:
 
       - name: Login to GitHub Container Registry (GHCR)
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
         with:
           registry: ghcr.io
           username: gha
