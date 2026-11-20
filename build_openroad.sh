@@ -26,7 +26,7 @@ YOSYS_ARGS=""
 OPENROAD_APP_USER_ARGS=()
 OPENROAD_APP_ARGS=()
 
-DOCKER_OS_NAME="ubuntu22.04"
+DOCKER_OS_NAME="ubuntu26.04"
 PROC=-1
 
 WITH_VERIFIC=0
@@ -101,7 +101,7 @@ Options:
 Options valid only for Docker builds:
     -c, --copy-platforms    Copy platforms to inside docker image.
 
-    --os=DOCKER_OS_NAME     Choose between ubuntu22.04 (default), ubuntu20.04.
+    --os=DOCKER_OS_NAME     Use ubuntu26.04 (default) or ubuntu24.04.
 
     This script builds the OpenROAD tools: openroad, yosys and yosys plugins.
     By default, the tools will be built from the linked submodule hashes.
@@ -374,15 +374,12 @@ __local_build()
                 export LIBRARY_PATH="${_joined_paths}${LIBRARY_PATH:+:$LIBRARY_PATH}"
                 echo "[INFO] General LIBRARY_PATH=$LIBRARY_PATH"
         fi
-        if [[ -f "/opt/rh/rh-python38/enable" ]]; then
+        # EL8: the default GCC 8 is too old for Yosys, which needs C++20.
+        # It stays active for kepler-formal, which uses the host compiler
+        # where no downloaded clang is registered (aarch64).
+        if [[ -f "/opt/rh/gcc-toolset-13/enable" ]]; then
                 set +u
-                source /opt/rh/rh-python38/enable
-                set -u
-        fi
-        if [[ -f "/opt/rh/devtoolset-8/enable" ]]; then
-                # the scl script has unbound variables
-                set +u
-                source /opt/rh/devtoolset-8/enable
+                source /opt/rh/gcc-toolset-13/enable
                 set -u
         fi
 
@@ -417,17 +414,20 @@ __local_build()
                 ${YOSYS_ARGS}
         ${NICE} cmake --build tools/yosys/build --target install -j "${PROC}"
 
-        echo "[INFO FLW-0031] Compiling kepler-formal"
-        ${NICE} cmake -B tools/kepler-formal/build tools/kepler-formal \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_CXX_FLAGS_RELEASE="-Ofast -march=x86-64-v3 -ffast-math -flto" \
-                -DCMAKE_EXE_LINKER_FLAGS="-flto" \
-                -DCMAKE_BUILD_RPATH="${DIR}/tools/kepler-formal/build/thirdparty/naja/src/dnl:${DIR}/tools/kepler-formal/build/thirdparty/naja/src/nl/nl:${DIR}/tools/kepler-formal/build/thirdparty/naja/src/optimization" \
-                -DCMAKE_INSTALL_RPATH="${INSTALL_PATH}/kepler-formal/lib" \
-                -DCMAKE_BUILD_WITH_INSTALL_RPATH=OFF \
-                -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=OFF \
-                -DCMAKE_INSTALL_PREFIX="${INSTALL_PATH}/kepler-formal"
-        ${NICE} cmake --build tools/kepler-formal/build --target install -j "${PROC}"
+        echo "[INFO FLW-0031] Installing kepler-formal"
+        # etc/kepler-formal pins kepler-formal; Bazel downloads it, its
+        # dependencies and the compiler. See etc/kepler-formal/README.md.
+        if ! command -v bazelisk &> /dev/null; then
+                echo "[ERROR FLW-0034] kepler-formal needs bazelisk; run etc/DependencyInstaller.sh -common." >&2
+                exit 1
+        fi
+        KEPLER_PREFIX="${INSTALL_PATH}/kepler-formal"
+        if [[ "${KEPLER_PREFIX}" != /* ]]; then
+                KEPLER_PREFIX="$(pwd)/${KEPLER_PREFIX}"
+        fi
+        (cd "${DIR}/etc/kepler-formal" && \
+                ${NICE} bazelisk run --jobs="${PROC}" //:install -- "${KEPLER_PREFIX}" && \
+                ./install_licenses.sh "${KEPLER_PREFIX}")
 
         if [ ${WITH_VERIFIC} -eq 1 ]; then
                 echo "[INFO FLW-0032] Cleaning up Verific components."
