@@ -22,6 +22,7 @@ from memory_factory import MemoryFactory
 from timing_data import TimingData
 from ram_liberty_exporter import RAMLibertyExporter
 from lef_exporter import LefExporter
+from single_port_ram_verilog_exporter import SinglePortRAMVerilogExporter
 from test_utils import TestUtils
 from orfs_asap7.generate import (
     ASAP7_TIMING_CONFIG,
@@ -132,6 +133,28 @@ class MaskedSinglePortRAMTest(unittest.TestCase):
         with self.assertRaises(Exception):
             MemoryConfig("m", 114, 64, 1, 0, RW0_NAMES, 5)
 
+    def test_ragged_last_lane(self):
+        # tc_sram's byte enables over a 25-bit word: 8, 8, 8 and 1 bits
+        cfg = MemoryConfig("tag_64x25", 25, 64, 1, 0, RW0_NAMES, 4, 8)
+        self.assertEqual(cfg.get_mask_lane_width(), 8)
+        ram = MemoryFactory.create(cfg, "RAM", "SP", self.process, self.timing)
+        out = io.StringIO()
+        SinglePortRAMVerilogExporter(ram).export_module(out)
+        v = out.getvalue()
+        self.assertIn("mem[RW0_addr][23:16] <= RW0_wdata[23:16];", v)
+        self.assertIn("if (RW0_wmask[3])", v)
+        self.assertIn("mem[RW0_addr][24:24] <= RW0_wdata[24:24];", v)
+
+    def test_lane_width_must_leave_a_last_lane(self):
+        for width in (6, 9):  # 4 x 6 < 25; 3 x 9 >= 25 leaves lane 4 empty
+            with self.assertRaises(Exception):
+                MemoryConfig("m", 25, 64, 1, 0, RW0_NAMES, 4, width)
+
+    def test_even_split_is_unchanged(self):
+        self.assertEqual(
+            MemoryConfig("m", 114, 64, 1, 0, RW0_NAMES, 2).get_mask_lane_width(), 57
+        )
+
 
 class SinglePortPinsTest(unittest.TestCase):
     def test_reads_names_and_lanes(self):
@@ -187,24 +210,19 @@ class BackendTest(unittest.TestCase):
             inv.write_text(json.dumps(inventory))
             out = Path(d) / "memories"
             self.assertEqual(run_orfs_asap7("asap7", out, inv), 0)
+            # the views only: gen_memories.py writes blackboxes.txt
             self.assertEqual(
                 sorted(p.name for p in out.iterdir()),
                 [
                     "array_64x114.lef",
                     "array_64x114.lib",
                     "array_64x114_pre_layout.lib",
-                    "blackboxes.txt",
                 ],
             )
             lib = (out / "array_64x114.lib").read_text()
             self.assertIn("cell(array_64x114)", lib)
             self.assertIn("bus(RW0_wmask)", lib)
             self.assertIn("pin(RW0_en)", lib)
-            # `<module> <area>`: synthesis costs the blackbox by its area
-            [line] = (out / "blackboxes.txt").read_text().splitlines()
-            module, area = line.split()
-            self.assertEqual(module, "array_64x114")
-            self.assertGreater(float(area), 0)
 
     def test_declared_separate_ports_are_refused(self):
         pins = rw0_pins(32, 5, 0)
