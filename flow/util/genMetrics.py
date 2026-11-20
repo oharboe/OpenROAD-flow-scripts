@@ -7,6 +7,7 @@
 
 import hashlib
 import os
+import shlex
 import shutil
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -222,7 +223,9 @@ def extract_metrics(
     metrics_dict = defaultdict(dict)
     metrics_dict["run__flow__generate_date"] = datetime.now().strftime("%Y-%m-%d %H:%M")
     metrics_dict["run__flow__metrics_version"] = "Metrics_2.1.2"
-    cmdOutput = check_output([os.environ.get("OPENROAD_EXE", "openroad"), "-version"])
+    # OPENROAD_EXE is a command: a wrapper such as valgrind can come first
+    openroad = shlex.split(os.environ.get("OPENROAD_EXE", "openroad"))
+    cmdOutput = check_output(openroad + ["-version"])
     cmdFields = [x.decode("utf-8") for x in cmdOutput.split()]
     metrics_dict["run__flow__openroad_version"] = str(cmdFields[0])
     if len(cmdFields) > 1:
@@ -251,9 +254,8 @@ def extract_metrics(
     merge_jsons(logPath, metrics_dict, "1_*.json")
 
     # Netlist hashes: fingerprints of the canonical RTLIL (pre-ABC) and
-    # the final post-synthesis Verilog so the rules-base.json check
-    # (level=warning) flags when bazel-built vs make-built yosys
-    # disagree for the same RTL.
+    # the final post-synthesis Verilog, so a QoR check can flag when
+    # bazel-built vs make-built yosys disagree for the same RTL.
     metrics_dict["synth__canonical_netlist__hash"] = file_sha1(
         resultPath + "/1_1_yosys_canonicalize.rtlil"
     )
