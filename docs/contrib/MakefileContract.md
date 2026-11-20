@@ -79,8 +79,9 @@ Several of the rules exist for them.
   variable and is recorded.
   *Breaks:* caching a step's result, the QoR check against a baseline, and
   bisecting a regression.
-- **A failing step never calls `exit`.** It writes `<step>-failed.odb` and
-  calls `error`, as `flow/scripts/global_place.tcl` does.
+- **A failing step never calls `exit`.** It calls `error`, and
+  `flow/scripts/run_step.tcl` writes `<step>-failed.odb` and `.sdc`
+  (`WRITE_ON_FAILURE`).
   *Breaks:* the log and the exit status stop saying where the step failed,
   and there is no checkpoint to inspect.
 - **A `PRE_<STEP>_TCL` hook never runs before the design is loaded.** Hooks
@@ -138,3 +139,27 @@ Several of the rules exist for them.
   `$(shell sed ...)`.** That logic is in Python with unit tests.
   *Breaks:* a heuristic nobody can test, read, or run on a machine without
   that tool.
+
+## Directories
+
+A design's files are split over four directories so that where a file lands
+says what it is: the design, a measurement of it, a log, or scaffolding. One
+directory would work for the flow; four make the tree legible. What a file
+is decides its directory, not who reads it.
+
+- **`RESULTS_DIR` holds the design, in any format:** netlists, `.odb`,
+  `.def`, `.gds`, `.sdc`, routing guides, placement scripts, the checkpoint a
+  failed step leaves, and memory inventories.
+  *Breaks:* a flow or a user looking for the design finds part of it
+  elsewhere.
+- **`REPORTS_DIR` holds measurements of the design,** for tools or people to
+  read. No step's result depends on it.
+  *Breaks:* a flow that hands a step only the results has to carry reports
+  along.
+- **`LOG_DIR` holds logs,** and each step's metrics `.json` next to its log.
+  *Breaks:* `genReport.py` and the metrics tools miss a run's record.
+- **`OBJECTS_DIR` holds what is not the design:** files a step derives from
+  the platform (`klayout.lyt`), a step's own intermediate files
+  (`abc.constr`, `rtlmp/`, `surgery/`), caches, and stopgaps that wait for a
+  cleaner implementation.
+  *Breaks:* the design is mixed with scaffolding.
