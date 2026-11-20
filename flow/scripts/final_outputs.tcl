@@ -1,4 +1,5 @@
 # Delete routing obstructions for final DEF
+source $::env(SCRIPTS_DIR)/formal_check.tcl
 source $::env(SCRIPTS_DIR)/deleteRoutingObstructions.tcl
 deleteRoutingObstructions
 
@@ -6,11 +7,20 @@ write_def $::env(RESULTS_DIR)/6_final.def
 write_verilog $::env(RESULTS_DIR)/6_final.v \
   -remove_cells [find_physical_only_masters]
 
+if { $::env(LEC_CHECK) || $::env(SEC_CHECK) } {
+  write_lec_verilog 6_final_lec.v
+}
+
+if { $::env(LEC_CHECK) } {
+  run_lec_test 6_final 1_synth_lec.v 6_final_lec.v
+}
+
+if { $::env(SEC_CHECK) } {
+  run_sec_test 6_final 1_synth_lec.v 6_final_lec.v
+}
+
 # Run extraction and STA
-if {
-  [env_var_exists_and_non_empty RCX_RULES]
-  && !$::env(SKIP_DETAILED_ROUTE)
-} {
+if { [final_extracts_parasitics] } {
   # RCX section
   define_process_corner -ext_model_index 0 X
   set_extraction_rules_file $::env(RCX_RULES)
@@ -43,10 +53,10 @@ if {
     puts "IR drop analysis for ground nets is skipped because GND_NETS_VOLTAGES is undefined"
   }
 } else {
-  puts "OpenRCX is not enabled for this platform."
-  puts "Falling back to global route-based estimates."
-  log_cmd estimate_parasitics -global_routing
+  puts "OpenRCX is not enabled for this platform or detailed route was skipped."
+  log_cmd estimate_parasitics
 }
+write_endpoint_slack 6_final 0
 
 report_cell_usage
 
