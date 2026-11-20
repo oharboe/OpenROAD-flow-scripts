@@ -115,14 +115,15 @@ proc env_var_exists_and_non_empty { env_var } {
 # AUTO_MEMORIES: do-auto-memories writes into $RESULTS_DIR/memories the
 # lists below, and every later step reads the files they name, never
 # what a directory happens to hold. gen_memories.py writes each list
-# whole, after every view exists.
+# whole, after every view exists. Every step reads them from
+# AUTO_MEMORIES_DIR, synthesis included.
 
 # The words of one of those lists; none without AUTO_MEMORIES.
 proc auto_memories_words { list } {
   if { ![env_var_equals AUTO_MEMORIES 1] } {
     return {}
   }
-  set fh [open "$::env(RESULTS_DIR)/memories/$list" r]
+  set fh [open "$::env(AUTO_MEMORIES_DIR)/$list" r]
   set content [read $fh]
   close $fh
   return [regexp -all -inline {\S+} $content]
@@ -154,7 +155,7 @@ proc auto_memories_names { list } {
 # The view of every macro in blackboxes.txt, by extension (.lib, .lef).
 proc auto_memories_views { ext } {
   return [lmap m [auto_memories_blackboxes] {
-    file join $::env(RESULTS_DIR) memories $m$ext
+    file join $::env(AUTO_MEMORIES_DIR) $m$ext
   }]
 }
 
@@ -187,9 +188,9 @@ proc pins_fixed_in_floorplan { } {
   }]
 }
 
-# set_place_config arguments for global_placement -place_ios, from the
+# set_placer_config arguments for global_placement -place_ios, from the
 # place_pins settings.
-proc place_pins_args_to_place_config { } {
+proc place_pins_args_to_placer_config { } {
   set config_args [list \
     -io_pin_hor_layers $::env(IO_PLACER_H) \
     -io_pin_ver_layers $::env(IO_PLACER_V)]
@@ -379,6 +380,18 @@ proc final_extracts_parasitics { } {
     [env_var_exists_and_non_empty RCX_RULES]
     && !$::env(SKIP_DETAILED_ROUTE)
   }]
+}
+
+# LIB_MODEL=CCS reads CCS libraries. The prima delay calculator simulates
+# the driver waveform on the RC network and costs tens of table lookups
+# per net, so it is used only once the design has global routes, which is
+# when estimate_parasitics switches from placement estimates to global
+# routing parasitics. Call it after the design is loaded or routed.
+proc use_ccs_delay_calculator { } {
+  if { $::env(LIB_MODEL) eq "CCS" && [grt::have_routes] } {
+    puts "Using CCS delay calculation"
+    log_cmd set_delay_calculator prima
+  }
 }
 
 # Load the parasitics that step is timed with and return where they came
