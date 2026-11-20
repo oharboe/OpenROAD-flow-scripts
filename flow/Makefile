@@ -205,7 +205,7 @@ do-klayout:
 		--output $(OBJECTS_DIR)/klayout.lyt \
 		--lef-files $(OBJECTS_DIR)/klayout_tech.lef $(SC_LEF) $(ADDITIONAL_LEFS) \
 		--map-files $(wildcard $(FLOW_HOME)/platforms/$(PLATFORM)/*map) \
-		$(if $(filter 1,$(AUTO_MEMORIES)),--blackboxes $(RESULTS_DIR)/memories/blackboxes.txt)
+		$(if $(filter 1,$(AUTO_MEMORIES)),--blackboxes $(AUTO_MEMORIES_DIR)/blackboxes.txt)
 
 $(OBJECTS_DIR)/klayout_wrap.lyt: $(KLAYOUT_TECH_FILE) $(OBJECTS_DIR)/klayout_tech.lef
 	$(UNSET_AND_MAKE) do-klayout_wrap
@@ -284,9 +284,13 @@ $(RESULTS_DIR)/memories.json: $(RESULTS_DIR)/memories_inferred.json $(ADDITIONAL
 
 yosys-dependencies: $(RESULTS_DIR)/memories.json
 $(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil: $(RESULTS_DIR)/memories.json
+$(RESULTS_DIR)/memories/blackboxes.txt: $(RESULTS_DIR)/memories.json ;
 # The generated LEFs are part of the KLayout technology the GDS merge
-# reads the final DEF with.
-$(OBJECTS_DIR)/klayout.lyt: $(RESULTS_DIR)/memories.json
+# reads the final DEF with. Synthesis writes its own memories;
+# AUTO_MEMORIES_DIR is where the stages after it read them, as
+# INPUT_RESULTS_DIR is where a stage reads its input, and another
+# variant's blackboxes.txt has no rule here.
+$(OBJECTS_DIR)/klayout.lyt: $(AUTO_MEMORIES_DIR)/blackboxes.txt
 endif
 
 # OpenROAD stages read binary liberty (.blib) files from a cache shared by
@@ -387,9 +391,6 @@ web_$(1):
 	$(2)=$(RESULTS_DIR)/$(1) $(OPENROAD_WEB_CMD) $(SCRIPTS_DIR)/open.tcl
 endef
 
-# Enables "make gui_5_1_grt-failed"
-$(eval $(call OPEN_GUI_SHORTCUT,5_1_grt-failed,5_1_grt-failed.odb))
-
 # Separate dependency checking and doing a step. This can
 # be useful to retest a stage without having to delete the
 # target, or when building a wafer thin layer on top of
@@ -404,7 +405,7 @@ $(eval $(call OPEN_GUI_SHORTCUT,5_1_grt-failed,5_1_grt-failed.odb))
 # A "do-synth" step would be welcomed, but it isn't strictly necessary
 # for the Bazel use-case.
 #
-# do-floorplan, do-place, do-cts, do-route, do-finish are the
+# do-floorplan, do-place, do-cts, do-grt, do-route, do-finish are the
 # supported interface to execute those stages without checking
 # for dependencies.
 #
@@ -425,6 +426,9 @@ ifeq ($(if $(4),$(4),.odb),.odb)
 $(1): $(RESULTS_DIR)/$(1).odb
 
 $(eval $(call OPEN_GUI_SHORTCUT,$(1),$(1).odb))
+# "make gui_<step>-failed" opens the checkpoint run_step.tcl writes when
+# the step fails
+$(eval $(call OPEN_GUI_SHORTCUT,$(1)-failed,$(1)-failed.odb))
 endif
 
 .PHONY: do-$(1)
@@ -630,7 +634,7 @@ $(eval $(call do-copy,5_route,5_3_fillcell))
 
 .PHONY: do-route
 do-route:
-	$(UNSET_AND_MAKE) do-5_1_grt do-5_2_route do-5_3_fillcell do-5_route
+	$(UNSET_AND_MAKE) do-5_2_route do-5_3_fillcell do-5_route
 
 .PHONY: do-grt
 do-grt:
@@ -933,11 +937,6 @@ klayout:
 run:
 	@mkdir -p $(RESULTS_DIR) $(LOG_DIR) $(REPORTS_DIR) $(OBJECTS_DIR)
 	$(RUN_CMD) --log $(abspath $(LOG_DIR)/$(RUN_LOG_NAME_STEM).log) --tee -- $(OPENROAD_CMD) -no_splash $(if $(filter %.py,$(RUN_SCRIPT)),-python) $(RUN_SCRIPT)
-
-export RUN_YOSYS_ARGS ?= -c $(SCRIPTS_DIR)/yosys_keep.tcl
-.phony: run-yosys
-run-yosys:
-	$(YOSYS_EXE) $(RUN_YOSYS_ARGS)
 
 # Utilities
 #-------------------------------------------------------------------------------
