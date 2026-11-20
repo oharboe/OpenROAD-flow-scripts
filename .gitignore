@@ -109,4 +109,5 @@ bazel-kepler-formal
 
 # python venv
 venv/
+.venv/
 tmp/
