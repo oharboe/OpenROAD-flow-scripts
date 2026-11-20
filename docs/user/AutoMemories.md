@@ -29,12 +29,22 @@ into `$(RESULTS_DIR)/memories_inferred.json`, and
 
 Synthesis (canonicalization) blackboxes the converted modules so the
 liberty view wins over their behavioral bodies; floorplan through final
-read the generated `.lib`/`.lef` alongside `ADDITIONAL_LIBS`/
-`ADDITIONAL_LEFS`. Everything downstream keys off the files above —
-nothing else passes between the generator and the flow. That file-based
-handoff is what lets build systems (e.g. bazel-orfs) declare the
-generated artifacts as ordinary stage outputs and transitive
-dependencies of the remaining stages.
+read the `<m>.lib`/`<m>.lef` of each module `blackboxes.txt` lists,
+alongside `ADDITIONAL_LIBS`/`ADDITIONAL_LEFS`. Everything downstream keys
+off the files above, by the names the lists give: a file in `memories/`
+that no list names is not read, and a list that is missing stops the
+step that reads it. Nothing else passes between the generator and the
+flow. That file-based handoff is what lets build systems (e.g.
+bazel-orfs) declare the generated artifacts as ordinary stage outputs
+and transitive dependencies of the remaining stages.
+
+Synthesis writes the views and lists to its own
+`$(RESULTS_DIR)/memories`. Every step reads them from
+`AUTO_MEMORIES_DIR`, synthesis included, which defaults to that
+directory; with make, leave it there. `AUTO_MEMORIES_DIR` is for a build
+system that runs a stage of one variant on another variant's synthesis
+(e.g. bazel-orfs): it sets it for each step it runs, synthesis included,
+to the memories of the variant that synthesised them.
 
 Memories that are *not* converted stay in the netlist and synthesize to
 flip-flops, like any other RTL.
@@ -94,6 +104,44 @@ carries win, everything else (geometry, pins) is kept from detection. A
 `.memories` entry naming a module the scanner never found is taken
 whole — it must then describe its pins itself.
 
+Write-mask lanes split the word evenly. A word that is not a whole
+number of lanes, such as pulp's `tc_sram` with byte enables over a
+25-bit word, needs `mask_lane_width` in its entry. Every lane is that
+wide except the last, which holds the remaining bits:
+
+```json
+{
+  "name": "tag_ram",
+  "rows": 64,
+  "bits": 25,
+  "addr_w": 6,
+  "rw_ports": 1,
+  "mask_lanes": 4,
+  "mask_lane_width": 8,
+  "idiomatic": true,
+  "reason": "one read-write port, byte enables, the last 1 bit",
+  "pins": [
+    {"name": "clk", "direction": "input", "width": 1, "port_id": "RW0", "function": "clk"},
+    {"name": "cs", "direction": "input", "width": 1, "port_id": "RW0", "function": "en"},
+    {"name": "we", "direction": "input", "width": 1, "port_id": "RW0", "function": "wmode"},
+    {"name": "addr", "direction": "input", "width": 6, "port_id": "RW0", "function": "addr"},
+    {"name": "wdata", "direction": "input", "width": 25, "port_id": "RW0", "function": "data_in"},
+    {"name": "be", "direction": "input", "width": 4, "port_id": "RW0", "function": "mask"},
+    {"name": "rdata", "direction": "output", "width": 25, "port_id": "RW0", "function": "data_out"}
+  ]
+}
+```
+
+The lanes must cover the word with a last lane of 1 to
+`mask_lane_width` bits; anything else is refused, as is an uneven split
+without `mask_lane_width`.
+
+The macro takes its lane count from the mask pin's width, so every
+mask pin must be `mask_lanes` wide, and a memory with `mask_lanes` must
+have one; anything else is refused, naming the memory. An override
+merged onto a detected memory keeps the detected pins: one that changes
+`mask_lanes` must bring its pins, with a mask pin to match.
+
 ## Generated views
 
 The views come from FakeRAM2.0's asap7 backend
@@ -144,6 +192,10 @@ write io_w0_addr io_w0_data io_w0_en
 cell flop DFFHQNx1_ASAP7_75t_R
 ...
 ```
+
+A listed module is a register file even where the idiomatic gate would
+convert it: FakeRAM builds no view for it, and `memories.json` records
+it once, as a register file.
 
 `memories/regfile_ram.py` translates the spec to `generate_ram_netlist`
 options (ports, banks, folds, the zero word, reset, read latency, write
