@@ -150,8 +150,10 @@ LIB_MODEL:
     Selects between NLDM and CCS timing models for the ASAP7 platform.
     Valid values: NLDM (default), CCS. Used in
     flow/platforms/asap7/config.mk to pick the LIB_DIR subdirectory and
-    accumulate the corresponding $(CORNER)_$(LIB_MODEL)_LIB_FILES list,
-    and in flow/scripts/load.tcl to gate CCS-specific Tcl branches.
+    accumulate the corresponding $(CORNER)_$(LIB_MODEL)_LIB_FILES list.
+    With CCS the prima delay calculator is used from the global routing
+    stage on, where the parasitics come from global routing; placement
+    and CTS use the table delay calculator on their estimates.
   default: NLDM
 PLATFORM_TCL:
   description: |
@@ -183,6 +185,16 @@ SYNTH_USE_SYN:
   stages:
     - synth
   default: 0
+AUTO_MEMORIES_DIR:
+  description: >
+    Directory every step reads AUTO_MEMORIES' generated views and lists
+    from, synthesis included. Synthesis writes them to its own
+    $(RESULTS_DIR)/memories, the default; with make, leave it there. For
+    a build system that runs a stage of one variant on another variant's
+    synthesis (e.g. bazel-orfs), which sets it for each step it runs,
+    synthesis included, to the memories of the variant that synthesised
+    them. Like AUTO_MEMORIES, not tied to stages: every step that reads
+    the views needs it, the abstract among them.
 AUTO_MEMORIES:
   description: >
     Experimental. When set to 1, memories that yosys infers in the RTL
@@ -400,6 +412,9 @@ SYNTH_RETIME_MODULES:
     List of modules to apply automatic retiming to. These modules must not get
     dissolved and as such they should either be the top module or be included
     in SYNTH_KEEP_MODULES.
+    Each entry is a glob over the modules left after flattening, and an entry
+    that matches none of them is an error. The slang frontend names a kept
+    module `Name$<path>`, which `Name*` matches.
     The main use case is to quickly identify if performance can be improved by
     manually retiming the input RTL.
     Retiming will treat module ports like register endpoints/startpoints.
@@ -453,7 +468,24 @@ INFER_CLKGATES:
     Enables Yosys clock gate inference. By default, it uses the Liberty cell
     definitions to determine clock gating cell. The selection can be overridden
     using the POS_CLKGATE_AND_PORTS and/or NEG_CLKGATE_AND_PORTS variables.
+    Every stage reads it: a platform may make the clock gating cells it
+    inserts usable for OpenROAD through DONT_USE_CELLS, as asap7 does.
   default: 0
+  stages:
+    - All stages
+INFER_CLKGATES_EXCLUDE:
+  description: >
+    Space-separated Yosys module name patterns whose flip-flops
+    INFER_CLKGATES leaves ungated, e.g. a module whose enable logic is
+    timing-critical. Only modules that still exist at clock gate inference
+    can be excluded, see SYNTH_HIERARCHICAL and SYNTH_KEEP_MODULES.
+  stages:
+    - synth
+INFER_CLKGATES_MIN_NET_SIZE:
+  description: >
+    Minimum number of flip-flops sharing a clock and enable for
+    INFER_CLKGATES to replace their enable with a clock gating cell. Smaller
+    groups keep their enable flip-flops. Unset gates every group.
   stages:
     - synth
 NEG_CLKGATE_AND_PORTS:
@@ -822,12 +854,6 @@ CTS_ARGS:
     Override `clock_tree_synthesis` arguments.
   stages:
     - cts
-CTS_SNAPSHOTS:
-  description: |
-    Create ODB/SDC files at different stages of CTS.
-  stages:
-    - cts
-  default: 0
 HOLD_SLACK_MARGIN:
   description: >
     Specifies a time margin for the slack when fixing hold violations.
@@ -1051,6 +1077,20 @@ FILL_CONFIG:
 KLAYOUT_TECH_FILE:
   description: |
     A mapping from LEF/DEF to GDS using the KLayout tool.
+KLAYOUT_DRC_FILE:
+  description: >
+    The KLayout DRC deck `make drc` runs. A `.py` deck runs with the klayout
+    Python module; a Ruby deck (`.lydrc`) is deprecated and needs the KLayout
+    application. Empty when the platform has no deck.
+  stages:
+    - final
+KLAYOUT_LVS_FILE:
+  description: >
+    The KLayout LVS deck `make lvs` runs. A `.py` deck runs with the klayout
+    Python module; a Ruby deck (`.lylvs`) is deprecated and needs the KLayout
+    application. Empty when the platform has no deck.
+  stages:
+    - final
 IR_DROP_LAYER:
   description: |
     Default metal layer to report IR drop.
@@ -1276,6 +1316,12 @@ CTS_LIB_NAME:
     Name of the Liberty library to use in selecting the clock buffers.
   stages:
     - cts
+CTS_USEFUL_SKEW:
+  description: |
+    Enable useful skew during the CTS balancing phase.
+  stages:
+    - cts
+  default: 0
 POST_CTS_TCL:
   description: |
     Specifies a Tcl script with commands to run after CTS is completed.
@@ -1649,8 +1695,8 @@ FLOW_INPUT_VARIANT:
     runs, then leaves it at the default: the shared stages run once, and
     the fork writes only its own results. A stage's later steps read the
     stage's own results. A stage stops when its input is in both
-    variants. Not with AUTO_MEMORIES=1, whose memories are read from the
-    variant that synthesised them.
+    variants. With AUTO_MEMORIES=1, AUTO_MEMORIES_DIR names the memories
+    of the variant that synthesised them, for every stage the fork runs.
   stages:
     - floorplan
     - place
@@ -1728,6 +1774,16 @@ WRITE_ODB_AND_SDC_EACH_STAGE:
   description: >
     Save out .sdc and .odb file after each stage, useful to disable
     when using a single OpenROAD instance to run all stages of the flow.
+  stages:
+    - All stages
+  default: 1
+WRITE_ON_FAILURE:
+  description: >
+    If set to 1, a step that fails writes the design as it was at the
+    failure to $RESULTS_DIR/<step>-failed.odb and .sdc, then fails with
+    the original error. `make web_<step>-failed.odb` opens it, e.g.
+    `make web_3_3_place_gp-failed.odb`. Set to 0 where writing a large
+    design on failure costs too much time or disk.
   stages:
     - All stages
   default: 1
