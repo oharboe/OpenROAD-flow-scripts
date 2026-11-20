@@ -39,6 +39,13 @@ endif
 
 include $(PLATFORM_DIR)/config.mk
 
+# defaults.py below runs with PYTHON_EXE, so set it first. See the dragons
+# comment near "setup all commands used within this flow" for why.
+ifeq ($(origin PYTHON_EXE), undefined)
+  PYTHON_EXE := $(shell command -v python3)
+endif
+export PYTHON_EXE
+
 # __SPACE__ is a workaround for whitespace hell in "foreach"; there
 # is no way to escape space in defaults.py and get "foreach" to work.
 $(foreach line,$(shell $(PYTHON_EXE) $(SCRIPTS_DIR)/defaults.py),$(eval export $(subst __SPACE__, ,$(line))))
@@ -47,6 +54,13 @@ export LOG_DIR     = $(WORK_HOME)/logs/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VAR
 export OBJECTS_DIR = $(WORK_HOME)/objects/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
 export REPORTS_DIR = $(WORK_HOME)/reports/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
 export RESULTS_DIR = $(WORK_HOME)/results/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
+# Where a stage reads the previous stage's result.
+export FLOW_INPUT_VARIANT ?= $(FLOW_VARIANT)
+export INPUT_RESULTS_DIR = $(WORK_HOME)/results/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_INPUT_VARIANT)
+# Where every step reads AUTO_MEMORIES' generated views; synthesis writes
+# them to its own $(RESULTS_DIR)/memories. Set by a build system that
+# runs a stage of one variant on another variant's synthesis.
+export AUTO_MEMORIES_DIR ?= $(RESULTS_DIR)/memories
 
 #-------------------------------------------------------------------------------
 ifeq (,$(strip $(NUM_CORES)))
@@ -104,12 +118,9 @@ export NUM_CORES
 # Python is not built by ORFS, and as such its absolute path has to be fetched
 # from the environment. Use `ifeq ($(origin PYTHON_EXE), undefined)` to check if
 # the variable hasn't been defined yet and run a single shell instance to fetch
-# the absolute path if so. The other tools should've been built by ORFS, and can
-# use a pre-specified path, which we can just use ?= for.
-ifeq ($(origin PYTHON_EXE), undefined)
-  PYTHON_EXE := $(shell command -v python3)
-endif
-export PYTHON_EXE
+# the absolute path if so. That is done further up, before defaults.py runs.
+# The other tools should've been built by ORFS, and can use a pre-specified
+# path, which we can just use ?= for.
 
 export RUN_CMD = $(PYTHON_EXE) $(FLOW_HOME)/scripts/run_command.py
 
@@ -128,22 +139,13 @@ export YOSYS_EXE ?= $(abspath $(FLOW_HOME)/../tools/install/yosys/bin/yosys)
 
 YOSYS_IS_VALID := $(if $(YOSYS_EXE),$(shell test -x $(YOSYS_EXE) && echo "true"),)
 
-# Use locally installed and built klayout if it exists, otherwise use klayout in path
-KLAYOUT_DIR = $(abspath $(FLOW_HOME)/../tools/install/klayout/)
-KLAYOUT_BIN_FROM_DIR = $(KLAYOUT_DIR)/klayout
-
 KEPLER_FORMAL_EXE ?= $(abspath $(FLOW_HOME)/../tools/install/kepler-formal/bin/kepler-formal)
 export KEPLER_FORMAL_EXE
 
-ifeq ($(wildcard $(KLAYOUT_BIN_FROM_DIR)), $(KLAYOUT_BIN_FROM_DIR))
-KLAYOUT_CMD ?= sh -c 'LD_LIBRARY_PATH=$(dir $(KLAYOUT_BIN_FROM_DIR)) $$0 "$$@"' $(KLAYOUT_BIN_FROM_DIR)
-else
-ifeq ($(KLAYOUT_CMD),)
-KLAYOUT_CMD ?= $(shell command -v klayout)
+ifeq ($(origin KLAYOUT_CMD), undefined)
+KLAYOUT_CMD := $(shell command -v klayout)
 endif
-endif
-
-export KLAYOUT_CMD := $(KLAYOUT_CMD)
+export KLAYOUT_CMD
 
 #-------------------------------------------------------------------------------
 WRAPPED_LEFS = $(foreach lef,$(notdir $(WRAP_LEFS)),$(OBJECTS_DIR)/lef/$(lef:.lef=_mod.lef))
