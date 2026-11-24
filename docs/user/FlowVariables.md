@@ -104,6 +104,7 @@ configuration file.
 | <a name="ADDITIONAL_SITES"></a>ADDITIONAL_SITES| Passed as -additional_sites to initialize_floorplan.| |
 | <a name="ASAP7_USE_VT"></a>ASAP7_USE_VT| A space separated list of VT options to use with the ASAP7 standard cell library: RVT, LVT, SLVT.| RVT|
 | <a name="AUTO_MEMORIES"></a>AUTO_MEMORIES| Experimental. When set to 1, memories that yosys infers in the RTL (`$mem_v2` cells, module boundary only) are detected pre-synthesis, inventoried in `$(RESULTS_DIR)/memories.json`, and — when idiomatic as an SRAM macro — given generated .lib/.lef views under `$(RESULTS_DIR)/memories/`. Synthesis blackboxes those modules and all later stages read the generated views, so an existing design gets macro-based results without a memory compiler. Supported for the asap7 platform only. See docs/user/AutoMemories.md.| 0|
+| <a name="AUTO_MEMORIES_DIR"></a>AUTO_MEMORIES_DIR| Directory every step reads AUTO_MEMORIES' generated views and lists from, synthesis included. Synthesis writes them to its own $(RESULTS_DIR)/memories, the default; with make, leave it there. For a build system that runs a stage of one variant on another variant's synthesis (e.g. bazel-orfs), which sets it for each step it runs, synthesis included, to the memories of the variant that synthesised them. Like AUTO_MEMORIES, not tied to stages: every step that reads the views needs it, the abstract among them.| |
 | <a name="AUTO_MEMORIES_MACRO_PLACE"></a>AUTO_MEMORIES_MACRO_PLACE| Experimental. Space-separated list of module names of AUTO_MEMORIES_REGFILES register files to place as macros, blackboxed in synthesis and placed by the macro placer (and, in `mode netlist`, dissolved after macro placement). A register file not listed is inlined: its generated netlist of standard cells replaces the module's body in synthesis, and its cells are placed, sized and buffered with the rest of the design -- the better shape for a small design, where a macro's outline and channels cost more core than the array saves. A name no spec builds stops the build. Requires AUTO_MEMORIES=1.| |
 | <a name="AUTO_MEMORIES_REGFILES"></a>AUTO_MEMORIES_REGFILES| Experimental. Space-separated list of register-file spec files, one per RTL module to build as a register file of placed standard cells rather than synthesise to flops. Each spec names its module, words, bits, read and write ports by the RTL's own port names, and the cells. memories/regfile_ram.py checks the spec against the module's ports and has OpenROAD's generate_ram build it as `<module>_ram`, under `$(RESULTS_DIR)/memories/`, with a wrapper in the module's place. A module named in AUTO_MEMORIES_MACRO_PLACE is blackboxed like an AUTO_MEMORIES macro and placed as one; any other is inlined as its generated netlist. A placed spec in `mode netlist` then dissolves into its cells after macro placement: its core FIRM where the macro was placed, in the macro's orientation, its periphery left to placement. Every register file appears in memories.json with kind `regfile`. Requires AUTO_MEMORIES=1.| |
 | <a name="BALANCE_ROWS"></a>BALANCE_ROWS| Balance rows during placement.| 0|
@@ -130,6 +131,7 @@ configuration file.
 | <a name="CTS_CLUSTER_DIAMETER"></a>CTS_CLUSTER_DIAMETER| Maximum diameter (in microns) of sink cluster.| |
 | <a name="CTS_CLUSTER_SIZE"></a>CTS_CLUSTER_SIZE| Maximum number of sinks per cluster.| |
 | <a name="CTS_LIB_NAME"></a>CTS_LIB_NAME| Name of the Liberty library to use in selecting the clock buffers.| |
+| <a name="CTS_USEFUL_SKEW"></a>CTS_USEFUL_SKEW| Enable useful skew during the CTS balancing phase.| 0|
 | <a name="DESIGN_NAME"></a>DESIGN_NAME| The name of the top-level module of the design.| |
 | <a name="DESIGN_NICKNAME"></a>DESIGN_NICKNAME| DESIGN_NICKNAME just changes the directory name that ORFS outputs to be DESIGN_NICKNAME instead of DESIGN_NAME in case DESIGN_NAME is unwieldy or conflicts with a different design.| |
 | <a name="DETAILED_METRICS"></a>DETAILED_METRICS| If set, then calls report_metrics prior to repair operations in the CTS and global route stages| 0|
@@ -151,7 +153,7 @@ configuration file.
 | <a name="FILL_CELLS"></a>FILL_CELLS| Fill cells are used to fill empty sites. If not set or empty, fill cell insertion is skipped.| |
 | <a name="FILL_CONFIG"></a>FILL_CONFIG| JSON rule file for metal fill during chip finishing.| |
 | <a name="FLOORPLAN_DEF"></a>FLOORPLAN_DEF| Use the DEF file to initialize floorplan. Mutually exclusive with FOOTPRINT or DIE_AREA/CORE_AREA or CORE_UTILIZATION.| |
-| <a name="FLOW_INPUT_VARIANT"></a>FLOW_INPUT_VARIANT| Flow variant a stage reads the previous stage's result from, the .odb and the .sdc beside it. Defaults to FLOW_VARIANT. A variant forked off another sets it to that variant for the first stage it runs, then leaves it at the default: the shared stages run once, and the fork writes only its own results. A stage's later steps read the stage's own results. A stage stops when its input is in both variants. Not with AUTO_MEMORIES=1, whose memories are read from the variant that synthesised them.| |
+| <a name="FLOW_INPUT_VARIANT"></a>FLOW_INPUT_VARIANT| Flow variant a stage reads the previous stage's result from, the .odb and the .sdc beside it. Defaults to FLOW_VARIANT. A variant forked off another sets it to that variant for the first stage it runs, then leaves it at the default: the shared stages run once, and the fork writes only its own results. A stage's later steps read the stage's own results. A stage stops when its input is in both variants. With AUTO_MEMORIES=1, AUTO_MEMORIES_DIR names the memories of the variant that synthesised them, for every stage the fork runs.| |
 | <a name="FLOW_VARIANT"></a>FLOW_VARIANT| Flow variant to use, used in the flow variant directory name.| base|
 | <a name="FOOTPRINT"></a>FOOTPRINT| Custom footprint definition file for ICeWall-based floorplan initialization. Mutually exclusive with FLOORPLAN_DEF or DIE_AREA/CORE_AREA or CORE_UTILIZATION.| |
 | <a name="FOOTPRINT_TCL"></a>FOOTPRINT_TCL| Specifies a Tcl script with custom footprint-related commands for floorplan setup.| |
@@ -170,7 +172,9 @@ configuration file.
 | <a name="GRT_SEED"></a>GRT_SEED| Specifies a random seed for global routing.  Useful for perturbation studies.| |
 | <a name="GUI_TIMING"></a>GUI_TIMING| Load timing information when opening GUI. For large designs, this can be quite time consuming. Useful to disable when investigating non-timing aspects like floorplan, placement, routing, etc.| 1|
 | <a name="HOLD_SLACK_MARGIN"></a>HOLD_SLACK_MARGIN| Specifies a time margin for the slack when fixing hold violations. This option allows you to overfix or underfix (negative value, terminate retiming before 0 or positive slack). floorplan.tcl uses min of HOLD_SLACK_MARGIN and 0 (default hold slack margin). This avoids overrepair in floorplan for hold by default, but allows skipping hold repair using a negative HOLD_SLACK_MARGIN. Exiting timing repair early is useful in exploration where the .sdc has a fixed clock period at the design's target clock period and where HOLD/SETUP_SLACK_MARGIN is used to avoid overrepair (extremely long running times) when exploring different parameter settings. When an ideal clock is used, that is before CTS, a clock insertion delay of 0 is used in timing paths. This creates a mismatch between macros that have a .lib file from after CTS, when the clock is propagated. To mitigate this, OpenSTA will use subtract the clock insertion delay of macros when calculating timing with ideal clock. Provided that min_clock_tree_path and max_clock_tree_path are in the .lib file, which is the case for macros built with OpenROAD. This is less accurate than if OpenROAD had created a placeholder clock tree for timing estimation purposes prior to CTS. There will inevitably be inaccuracies in the timing calculation prior to CTS. Use a slack margin that is low enough, even negative, to avoid overrepair. Inaccuracies in the timing prior to CTS can also lead to underrepair, but there no obvious and simple way to avoid underrapir in these cases. Overrepair can lead to excessive runtimes in repair or too much buffering being added, which can present itself as congestion of hold cells or buffer cells. Another use of SETUP/HOLD_SLACK_MARGIN is design parameter exploration when trying to find the minimum clock period for a design. The SDC_FILE for a design can be quite complicated and instead of modifying the clock period in the SDC_FILE, which can be non-trivial, the clock period can be fixed at the target frequency and the SETUP/HOLD_SLACK_MARGIN can be swept to find a plausible current minimum clock period.| 0|
-| <a name="INFER_CLKGATES"></a>INFER_CLKGATES| Enables Yosys clock gate inference. By default, it uses the Liberty cell definitions to determine clock gating cell. The selection can be overridden using the POS_CLKGATE_AND_PORTS and/or NEG_CLKGATE_AND_PORTS variables.| 0|
+| <a name="INFER_CLKGATES"></a>INFER_CLKGATES| Enables Yosys clock gate inference. By default, it uses the Liberty cell definitions to determine clock gating cell. The selection can be overridden using the POS_CLKGATE_AND_PORTS and/or NEG_CLKGATE_AND_PORTS variables. Every stage reads it: a platform may make the clock gating cells it inserts usable for OpenROAD through DONT_USE_CELLS, as asap7 does.| 0|
+| <a name="INFER_CLKGATES_EXCLUDE"></a>INFER_CLKGATES_EXCLUDE| Space-separated Yosys module name patterns whose flip-flops INFER_CLKGATES leaves ungated, e.g. a module whose enable logic is timing-critical. Only modules that still exist at clock gate inference can be excluded, see SYNTH_HIERARCHICAL and SYNTH_KEEP_MODULES.| |
+| <a name="INFER_CLKGATES_MIN_NET_SIZE"></a>INFER_CLKGATES_MIN_NET_SIZE| Minimum number of flip-flops sharing a clock and enable for INFER_CLKGATES to replace their enable with a clock gating cell. Smaller groups keep their enable flip-flops. Unset gates every group.| |
 | <a name="IO_CONSTRAINTS"></a>IO_CONSTRAINTS| File path to the IO constraints .tcl file. Also used for manual placement.| |
 | <a name="IO_PLACER_H"></a>IO_PLACER_H| A list of metal layers on which the I/O pins are placed horizontally (top and bottom of the die).| |
 | <a name="IO_PLACER_V"></a>IO_PLACER_V| A list of metal layers on which the I/O pins are placed vertically (sides of the die).| |
@@ -285,6 +289,7 @@ configuration file.
 | <a name="SETUP_MOVE_SEQUENCE"></a>SETUP_MOVE_SEQUENCE| Passed as -sequence to repair_timing. This should be a string of move keywords separated by commas.| |
 | <a name="SETUP_REPAIR_PHASES"></a>SETUP_REPAIR_PHASES| Passed as -phases to repair_timing. This should be a string of setup repair phase names separated by spaces. Set to PARALLEL_EVAL to repair setup timing with the experimental parallel evaluation policy. When unset, repair_timing runs its default phases.| |
 | <a name="SETUP_SLACK_MARGIN"></a>SETUP_SLACK_MARGIN| Specifies a time margin for the slack when fixing setup violations. This option allows you to overfix or underfix(negative value, terminate retiming before 0 or positive slack). See HOLD_SLACK_MARGIN for more details.| 0|
+| <a name="SIG_MAP_FILE"></a>SIG_MAP_FILE| Signal map file for ICeWall-based floorplan initialization: the signal each pad of the FOOTPRINT file connects to.| |
 | <a name="SKIP_ANTENNA_REPAIR"></a>SKIP_ANTENNA_REPAIR| Skips antenna repair entirely.| 0|
 | <a name="SKIP_ANTENNA_REPAIR_POST_DRT"></a>SKIP_ANTENNA_REPAIR_POST_DRT| Skips antenna repair post-detailed routing.| 0|
 | <a name="SKIP_BUFFER_REMOVAL"></a>SKIP_BUFFER_REMOVAL| Passed as -skip_buffer_removal to repair_timing. Do not remove buffers as a transform to fix timing violations (default: allow buffer removal).| |
@@ -347,6 +352,7 @@ configuration file.
 | <a name="VIA_IN_PIN_MIN_LAYER"></a>VIA_IN_PIN_MIN_LAYER| Passed as -via_in_pin_bottom_layer to pin_access and detailed_route.| |
 | <a name="WIRE_LOAD_MODEL"></a>WIRE_LOAD_MODEL| Name of a Liberty wire_load group applied with set_wire_load_model whenever open.tcl reads timing. OpenSTA applies a wire-load model only to nets without parasitics, so it gives wire delay to timing read before placement and leaves placed and routed timing unaffected. An unknown name is an error. Empty, the default, applies none. A platform whose libraries define no wire_load group can supply one in a Liberty file listed in ADDITIONAL_LIBS.| |
 | <a name="WRITE_ODB_AND_SDC_EACH_STAGE"></a>WRITE_ODB_AND_SDC_EACH_STAGE| Save out .sdc and .odb file after each stage, useful to disable when using a single OpenROAD instance to run all stages of the flow.| 1|
+| <a name="WRITE_ON_FAILURE"></a>WRITE_ON_FAILURE| If set to 1, a step that fails writes the design as it was at the failure to $RESULTS_DIR/<step>-failed.odb and .sdc, then fails with the original error. `make web_<step>-failed.odb` opens it, e.g. `make web_3_3_place_gp-failed.odb`. Set to 0 where writing a large design on failure costs too much time or disk.| 1|
 | <a name="YOSYS_FLAGS"></a>YOSYS_FLAGS| Flags to pass to yosys.| -v 3|
 ## synth variables
 
@@ -363,7 +369,8 @@ configuration file.
 - [CLKGATE_MAP_FILE](#CLKGATE_MAP_FILE)
 - [DFF_LIB_FILE](#DFF_LIB_FILE)
 - [DFF_MAP_FILE](#DFF_MAP_FILE)
-- [INFER_CLKGATES](#INFER_CLKGATES)
+- [INFER_CLKGATES_EXCLUDE](#INFER_CLKGATES_EXCLUDE)
+- [INFER_CLKGATES_MIN_NET_SIZE](#INFER_CLKGATES_MIN_NET_SIZE)
 - [LATCH_MAP_FILE](#LATCH_MAP_FILE)
 - [LEC_AUX_VERILOG_FILES](#LEC_AUX_VERILOG_FILES)
 - [LEC_CHECK](#LEC_CHECK)
@@ -474,6 +481,7 @@ configuration file.
 - [SETUP_MOVE_SEQUENCE](#SETUP_MOVE_SEQUENCE)
 - [SETUP_REPAIR_PHASES](#SETUP_REPAIR_PHASES)
 - [SETUP_SLACK_MARGIN](#SETUP_SLACK_MARGIN)
+- [SIG_MAP_FILE](#SIG_MAP_FILE)
 - [SKIP_BUFFER_REMOVAL](#SKIP_BUFFER_REMOVAL)
 - [SKIP_CRIT_VT_SWAP](#SKIP_CRIT_VT_SWAP)
 - [SKIP_FLOORPLAN_REPAIR_TIMING](#SKIP_FLOORPLAN_REPAIR_TIMING)
@@ -546,6 +554,7 @@ configuration file.
 - [CTS_CLUSTER_DIAMETER](#CTS_CLUSTER_DIAMETER)
 - [CTS_CLUSTER_SIZE](#CTS_CLUSTER_SIZE)
 - [CTS_LIB_NAME](#CTS_LIB_NAME)
+- [CTS_USEFUL_SKEW](#CTS_USEFUL_SKEW)
 - [DETAILED_METRICS](#DETAILED_METRICS)
 - [DETAIL_PLACEMENT_ARGS](#DETAIL_PLACEMENT_ARGS)
 - [FLOW_INPUT_VARIANT](#FLOW_INPUT_VARIANT)
@@ -661,12 +670,14 @@ configuration file.
 
 - [ASAP7_USE_VT](#ASAP7_USE_VT)
 - [CORNERS](#CORNERS)
+- [INFER_CLKGATES](#INFER_CLKGATES)
 - [KEEP_VARS](#KEEP_VARS)
 - [NUM_CORES](#NUM_CORES)
 - [OPENROAD_HIERARCHICAL](#OPENROAD_HIERARCHICAL)
 - [SWAP_ARITH_OPERATORS](#SWAP_ARITH_OPERATORS)
 - [SYNTH_WRAPPED_OPERATORS](#SYNTH_WRAPPED_OPERATORS)
 - [WRITE_ODB_AND_SDC_EACH_STAGE](#WRITE_ODB_AND_SDC_EACH_STAGE)
+- [WRITE_ON_FAILURE](#WRITE_ON_FAILURE)
 
 ## generate_abstract variables
 
@@ -679,6 +690,7 @@ configuration file.
 - [ADDITIONAL_LEFS](#ADDITIONAL_LEFS)
 - [ADDITIONAL_LIBS](#ADDITIONAL_LIBS)
 - [AUTO_MEMORIES](#AUTO_MEMORIES)
+- [AUTO_MEMORIES_DIR](#AUTO_MEMORIES_DIR)
 - [CAP_MARGIN](#CAP_MARGIN)
 - [CDL_FILES](#CDL_FILES)
 - [CORNER](#CORNER)
