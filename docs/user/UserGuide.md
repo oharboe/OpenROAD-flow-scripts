@@ -7,7 +7,7 @@ The OpenROAD Project uses three tools to perform automated RTL-to-GDS layout gen
 2.  [OpenROAD](https://github.com/The-OpenROAD-Project/OpenROAD):
     Floorplanning through Detailed Routing
 3.  [KLayout](https://www.klayout.de/): GDS merge, DRC and LVS (public
-    PDKs)
+    PDKs), all with its Python module
 
 To automate RTL-to-GDS we provide
 [OpenROAD Flow](https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts),
@@ -31,7 +31,7 @@ The two main directories are:
 
 ## Setup
 
-See [Getting Started](../index.md#getting-started-with-openroad-flow-scripts) guide.
+See [Getting Started](../index2.md#getting-started-with-openroad-flow-scripts) guide.
 
 ## Using the OpenROAD Flow
 
