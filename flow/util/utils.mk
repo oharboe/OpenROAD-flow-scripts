@@ -4,13 +4,11 @@
 metadata: finish metadata-generate metadata-check
 
 # Synthesis-only metadata: generate and check QoR after just the synth
-# stage, without running the full flow. The synthesis-stage subset of
-# the design's regular rules file gates the run, so no per-variant
-# rules file needs to be committed. Sequential sub-makes rather than
-# prerequisites: each step consumes the previous one's outputs, which
-# plain prerequisites would race under make -j.
+# stage, without running the full flow. Only the synthesis-stage metrics
+# are sent to the dashboard, which evaluates just those. Sequential
+# sub-makes rather than prerequisites: each step consumes the previous
+# one's outputs, which plain prerequisites would race under make -j.
 .PHONY: metadata-synth
-metadata-synth: export RULES_JSON = $(DESIGN_DIR)/rules-base.json
 metadata-synth:
 	$(MAKE) synth
 	$(MAKE) metadata-generate
@@ -29,22 +27,34 @@ metadata-generate:
 	    -o $(REPORTS_DIR)/metadata.json 2>&1 \
 	    | tee $(abspath $(REPORTS_DIR)/metadata-generate.log)
 
-export RULES_JSON ?= $(DESIGN_DIR)/rules-$(FLOW_VARIANT).json
-
+# The QoR gate: metadata.json against the QoR dashboard's baseline for the
+# commit it records (the master build at its merge base, from the first of
+# the dashboard's default pipelines that has the design), using the
+# dashboard's rule configs. If no local remote-tracking ref contains the local
+# commit, compute its merge base against DASHBOARD_MERGE_BASE (default
+# refs/remotes/upstream/master if it names a commit, else
+# refs/remotes/origin/master).
+# If the pinned build is missing, warn and send the run unpinned. When local
+# pinning applies, warn for a default ref that gives no merge base and fail
+# for an explicit ref that gives no merge base. Set DASHBOARD_BASE_COMMIT
+# to pin the baseline, DASHBOARD_API_KEY for a private platform and
+# DASHBOARD_JOB_NAME to check as a build of one pipeline instead. A failed
+# rule fails the target; an unreachable dashboard or a design without a
+# baseline only warns.
 .PHONY: metadata-check
 metadata-check:
-	$(PYTHON_EXE) $(UTILS_DIR)/checkMetadata.py \
-	    -m $(REPORTS_DIR)/metadata.json \
-	    -r $(RULES_JSON) 2>&1 \
+	$(PYTHON_EXE) $(UTILS_DIR)/checkQorMetrics.py \
+	    -m $(abspath $(REPORTS_DIR)/metadata.json) \
+	    -p $(PLATFORM) -d $(DESIGN_NICKNAME) --variant $(FLOW_VARIANT) 2>&1 \
 	    | tee $(abspath $(REPORTS_DIR)/metadata-check.log)
 
-# Check only the synthesis-stage subset of RULES_JSON, so a
-# synthesis-only run can be gated by the design's full-flow rules file.
+# Send only the synthesis-stage metrics, so a synthesis-only run is gated
+# by the rules the dashboard holds for those metrics.
 .PHONY: metadata-check-synth
 metadata-check-synth:
-	$(PYTHON_EXE) $(UTILS_DIR)/checkMetadata.py \
-	    -m $(REPORTS_DIR)/metadata.json \
-	    -r $(RULES_JSON) \
+	$(PYTHON_EXE) $(UTILS_DIR)/checkQorMetrics.py \
+	    -m $(abspath $(REPORTS_DIR)/metadata.json) \
+	    -p $(PLATFORM) -d $(DESIGN_NICKNAME) --variant $(FLOW_VARIANT) \
 	    --only-prefix synth__ constraints__ 2>&1 \
 	    | tee $(abspath $(REPORTS_DIR)/metadata-check.log)
 
@@ -53,47 +63,14 @@ clean_metadata:
 	rm -f $(REPORTS_DIR)/design-dir.txt
 	rm -f $(REPORTS_DIR)/metadata*.*
 
-.PHONY: update_ok
-update_ok: update_rules
-
+# The golden designs/<platform>/<design>/metadata-<variant>-ok.json files
+# were removed with the report table that compared runs against them.
 .PHONY: update_metadata
 update_metadata:
-	cp -f $(REPORTS_DIR)/metadata.json \
-	      $(DESIGN_DIR)/metadata-$(FLOW_VARIANT)-ok.json
-
-.PHONY: do-update_rules
-do-update_rules:
-	mkdir -p $(REPORTS_DIR)
-	$(PYTHON_EXE) $(UTILS_DIR)/genRuleFile.py \
-	    --rules $(RULES_JSON) \
-	    --new-rules $(REPORTS_DIR)/rules.json \
-	    --reference $(REPORTS_DIR)/metadata.json \
-	    --variant $(FLOW_VARIANT) \
-	    --failing \
-	    --tighten
-
-.PHONY: do-copy_update_rules
-do-copy_update_rules:
-	cp -f $(REPORTS_DIR)/rules.json \
-	      $(RULES_JSON)
-
-.PHONY: update_rules
-update_rules: do-update_rules do-copy_update_rules
-
-.PHONY: do-update_rules_force
-do-update_rules_force:
-	mkdir -p $(REPORTS_DIR)
-	$(PYTHON_EXE) $(UTILS_DIR)/genRuleFile.py \
-	    --rules $(RULES_JSON) \
-	    --new-rules $(REPORTS_DIR)/rules.json \
-	    --reference $(REPORTS_DIR)/metadata.json \
-	    --variant $(FLOW_VARIANT) \
-	    --update
-
-.PHONY: update_rules_force
-update_rules_force: do-update_rules_force
-	cp -f $(REPORTS_DIR)/rules.json \
-	      $(RULES_JSON)
+	@echo "[WARN] make update_metadata is deprecated and does nothing." \
+	      "The golden metadata-<variant>-ok.json files and the report table" \
+	      "that read them were removed. Baselines live in the QoR dashboard" \
+	      "(see docs/contrib/Metrics.md)."
 
 .PHONY: update_metadata_autotuner
 update_metadata_autotuner:
@@ -113,6 +90,14 @@ write_rc: $(RESULTS_DIR)/6_nets_rc.csv $(RESULTS_DIR)/6_segments_rc.csv
 # A pattern rule to write both files with a single run, as the grouped target
 # syntax requires GNU Make 4.3.
 %_nets_rc.csv %_segments_rc.csv:
+	$(UNSET_AND_MAKE) do-write_rc
+
+# The do- sibling, following do-synth-report and the do-step/do-copy
+# families: the file target above decides *whether* to run and delegates
+# here, and this rule is the only place the invocation lives. A caller
+# doing its own dependency checking asks for this one directly.
+.PHONY: do-write_rc
+do-write_rc:
 	$(RUN_CMD) --log $(LOG_DIR)/6_write_rc.log --tee -- $(OPENROAD_CMD) $(UTILS_DIR)/write_rc.tcl
 
 .PHONY: correlate_rc
@@ -133,21 +118,6 @@ correlate_platform_rc:
 	done
 	$(PYTHON_EXE) $(UTILS_DIR)/correlateRC.py \
 	    -segments_rc_file $$(find results/$(PLATFORM)/*/base -name 6_segments_rc.csv)
-
-# Run test using gnu parallel
-#-------------------------------------------------------------------------------
-TEST_SCRIPT ?= $(TEST_DIR)/core_tests.sh
-.PHONY: run_test
-run_test:
-	parallel --sshloginfile $(TEST_DIR)/nodes.txt \
-	         --timeout 21600 \
-	         --workdir `pwd` < $(TEST_SCRIPT) \
-	         --joblog $(TEST_DIR)/parallel.log
-
-.PHONY: clean_test
-clean_test:
-	rm -rf $(TEST_DIR)/logs
-	rm -rf $(TEST_DIR)/parallel.log
 
 # Utility to create issues
 #-------------------------------------------------------------------------------
