@@ -54,6 +54,13 @@ export LOG_DIR     = $(WORK_HOME)/logs/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VAR
 export OBJECTS_DIR = $(WORK_HOME)/objects/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
 export REPORTS_DIR = $(WORK_HOME)/reports/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
 export RESULTS_DIR = $(WORK_HOME)/results/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_VARIANT)
+# Where a stage reads the previous stage's result.
+export FLOW_INPUT_VARIANT ?= $(FLOW_VARIANT)
+export INPUT_RESULTS_DIR = $(WORK_HOME)/results/$(PLATFORM)/$(DESIGN_NICKNAME)/$(FLOW_INPUT_VARIANT)
+# Where every step reads AUTO_MEMORIES' generated views; synthesis writes
+# them to its own $(RESULTS_DIR)/memories. Set by a build system that
+# runs a stage of one variant on another variant's synthesis.
+export AUTO_MEMORIES_DIR ?= $(RESULTS_DIR)/memories
 
 #-------------------------------------------------------------------------------
 ifeq (,$(strip $(NUM_CORES)))
@@ -120,7 +127,14 @@ export RUN_CMD = $(PYTHON_EXE) $(FLOW_HOME)/scripts/run_command.py
 export OPENROAD_EXE ?= $(abspath $(FLOW_HOME)/../tools/install/OpenROAD/bin/openroad)
 export OPENSTA_EXE  ?= $(abspath $(FLOW_HOME)/../tools/install/OpenROAD/bin/sta)
 
-OPENROAD_IS_VALID := $(if $(OPENROAD_EXE),$(shell test -x $(OPENROAD_EXE) && echo "true"),)
+# OPENROAD_EXE and YOSYS_EXE are commands, not only paths: a wrapper can
+# come first, as in OPENROAD_EXE="gdb --args openroad" or
+# OPENROAD_EXE="valgrind openroad". The check is on the program the command
+# starts with, a path or a name on PATH. The binary is the last word.
+# The shell splits the command, as a recipe does, so a quoted path with
+# spaces in it is one program: OPENROAD_EXE="'/opt/my tools/openroad'".
+command_is_valid = $(if $(1),$(shell set -- $(1) && command -v "$$1" >/dev/null && echo "true"),)
+OPENROAD_IS_VALID := $(call command_is_valid,$(OPENROAD_EXE))
 
 export OPENROAD_ARGS = -no_init -threads $(NUM_CORES) $(OR_ARGS)
 export OPENROAD_CMD = $(OPENROAD_EXE) -exit $(OPENROAD_ARGS)
@@ -130,24 +144,15 @@ export OPENROAD_WEB_CMD = $(OPENROAD_EXE) -web -threads $(NUM_CORES) $(OR_ARGS)
 
 export YOSYS_EXE ?= $(abspath $(FLOW_HOME)/../tools/install/yosys/bin/yosys)
 
-YOSYS_IS_VALID := $(if $(YOSYS_EXE),$(shell test -x $(YOSYS_EXE) && echo "true"),)
-
-# Use locally installed and built klayout if it exists, otherwise use klayout in path
-KLAYOUT_DIR = $(abspath $(FLOW_HOME)/../tools/install/klayout/)
-KLAYOUT_BIN_FROM_DIR = $(KLAYOUT_DIR)/klayout
+YOSYS_IS_VALID := $(call command_is_valid,$(YOSYS_EXE))
 
 KEPLER_FORMAL_EXE ?= $(abspath $(FLOW_HOME)/../tools/install/kepler-formal/bin/kepler-formal)
 export KEPLER_FORMAL_EXE
 
-ifeq ($(wildcard $(KLAYOUT_BIN_FROM_DIR)), $(KLAYOUT_BIN_FROM_DIR))
-KLAYOUT_CMD ?= sh -c 'LD_LIBRARY_PATH=$(dir $(KLAYOUT_BIN_FROM_DIR)) $$0 "$$@"' $(KLAYOUT_BIN_FROM_DIR)
-else
-ifeq ($(KLAYOUT_CMD),)
-KLAYOUT_CMD ?= $(shell command -v klayout)
+ifeq ($(origin KLAYOUT_CMD), undefined)
+KLAYOUT_CMD := $(shell command -v klayout)
 endif
-endif
-
-export KLAYOUT_CMD := $(KLAYOUT_CMD)
+export KLAYOUT_CMD
 
 #-------------------------------------------------------------------------------
 WRAPPED_LEFS = $(foreach lef,$(notdir $(WRAP_LEFS)),$(OBJECTS_DIR)/lef/$(lef:.lef=_mod.lef))
@@ -193,7 +198,7 @@ export RESULTS_V = $(notdir $(sort $(wildcard $(RESULTS_DIR)/*.v)))
 export GDS_MERGED_FILE = $(RESULTS_DIR)/6_1_merged.$(STREAM_SYSTEM_EXT)
 
 define get_variables
-$(foreach V, $(.VARIABLES),$(if $(filter-out $(1), $(origin $V)), $(if $(filter-out .% %QT_QPA_PLATFORM% KLAYOUT% OPENROAD_EXE OPENROAD_ARGS OPENROAD_CMD OPENROAD_NO_EXIT_CMD OPENROAD_GUI_CMD OPENROAD_WEB_CMD OPENROAD_IS_VALID OPENSTA% PYTHON% YOSYS% GENERATE_ABSTRACT_RULE% do-step% do-copy% OPEN_GUI% OPEN_GUI_SHORTCUT% SUB_MAKE% UNSET_VARS% export%, $(V)), $V$ )))
+$(foreach V, $(.VARIABLES),$(if $(filter-out $(1), $(origin $V)), $(if $(filter-out .% %QT_QPA_PLATFORM% KLAYOUT% OPENROAD_EXE OPENROAD_ARGS OPENROAD_CMD OPENROAD_NO_EXIT_CMD OPENROAD_GUI_CMD OPENROAD_WEB_CMD OPENROAD_IS_VALID command_is_valid OPENSTA% PYTHON% YOSYS% GENERATE_ABSTRACT_RULE% do-step% do-copy% OPEN_GUI% OPEN_GUI_SHORTCUT% SUB_MAKE% UNSET_VARS% export%, $(V)), $V$ )))
 endef
 
 export UNSET_VARIABLES_NAMES := $(call get_variables,command% line environment% default automatic)

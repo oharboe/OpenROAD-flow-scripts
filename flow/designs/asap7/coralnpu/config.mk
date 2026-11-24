@@ -27,6 +27,7 @@ export SDC_FILE                = $(DESIGN_HOME)/$(PLATFORM)/$(DESIGN_NICKNAME)/c
 export SYNTH_HDL_FRONTEND     ?= slang
 
 export CORE_UTILIZATION        = 65
+export GPL_PLACE_IOS           = 1
 
 # coralnpu's units, kept by name: the core, its fetch, dispatch,
 # register files, load/store unit, CSRs and FPU, and the two AXI
