@@ -204,8 +204,8 @@ do-klayout:
 		--template $(KLAYOUT_TECH_FILE) \
 		--output $(OBJECTS_DIR)/klayout.lyt \
 		--lef-files $(OBJECTS_DIR)/klayout_tech.lef $(SC_LEF) $(ADDITIONAL_LEFS) \
-		  $(if $(filter 1,$(AUTO_MEMORIES)),$(wildcard $(RESULTS_DIR)/memories/*.lef)) \
-		--map-files $(wildcard $(FLOW_HOME)/platforms/$(PLATFORM)/*map)
+		--map-files $(wildcard $(FLOW_HOME)/platforms/$(PLATFORM)/*map) \
+		$(if $(filter 1,$(AUTO_MEMORIES)),--blackboxes $(AUTO_MEMORIES_DIR)/blackboxes.txt)
 
 $(OBJECTS_DIR)/klayout_wrap.lyt: $(KLAYOUT_TECH_FILE) $(OBJECTS_DIR)/klayout_tech.lef
 	$(UNSET_AND_MAKE) do-klayout_wrap
@@ -275,7 +275,7 @@ do-auto-memories: $(RESULTS_DIR)/memories_inferred.json
 	  $(foreach file,$(ADDITIONAL_MEMORIES),--memories $(file)) \
 	  $(foreach file,$(AUTO_MEMORIES_REGFILES),--regfile-spec $(file)) \
 	  $(foreach m,$(AUTO_MEMORIES_MACRO_PLACE),--macro-place $(m)) \
-	  $(if $(AUTO_MEMORIES_REGFILES),--openroad $(OPENROAD_EXE)) \
+	  $(if $(AUTO_MEMORIES_REGFILES),--openroad '$(subst ','\'',$(OPENROAD_EXE))') \
 	  $(foreach file,$(TECH_LEF) $(SC_LEF),--lef $(file))
 
 $(RESULTS_DIR)/memories.json: $(RESULTS_DIR)/memories_inferred.json $(ADDITIONAL_MEMORIES) \
@@ -284,9 +284,13 @@ $(RESULTS_DIR)/memories.json: $(RESULTS_DIR)/memories_inferred.json $(ADDITIONAL
 
 yosys-dependencies: $(RESULTS_DIR)/memories.json
 $(RESULTS_DIR)/1_1_yosys_canonicalize.rtlil: $(RESULTS_DIR)/memories.json
+$(RESULTS_DIR)/memories/blackboxes.txt: $(RESULTS_DIR)/memories.json ;
 # The generated LEFs are part of the KLayout technology the GDS merge
-# reads the final DEF with.
-$(OBJECTS_DIR)/klayout.lyt: $(RESULTS_DIR)/memories.json
+# reads the final DEF with. Synthesis writes its own memories;
+# AUTO_MEMORIES_DIR is where the stages after it read them, as
+# INPUT_RESULTS_DIR is where a stage reads its input, and another
+# variant's blackboxes.txt has no rule here.
+$(OBJECTS_DIR)/klayout.lyt: $(AUTO_MEMORIES_DIR)/blackboxes.txt
 endif
 
 # OpenROAD stages read binary liberty (.blib) files from a cache shared by
@@ -362,8 +366,15 @@ UNSET_VARS = for var in $(UNSET_VARIABLES_NAMES); do unset $$var; done
 # However, on some versions of make, MAKEFILE_LIST can be empty, so
 # don't expand it in that case.
 FILE_MAKEFILE ?= $(if $(firstword $(MAKEFILE_LIST)),--file=$(firstword $(MAKEFILE_LIST)),)
-SUB_MAKE = $(MAKE) $(foreach V,$(COMMAND_LINE_ARGS), $(if $($V),$V=$(shell echo "$($V)" | $(FLOW_HOME)/scripts/escape.sh),$V='')) --no-print-directory $(FILE_MAKEFILE) DESIGN_CONFIG=$(DESIGN_CONFIG)
-UNSET_AND_MAKE = @bash -c '$(UNSET_VARS); $(SUB_MAKE) $$@' --
+
+# UNSET_VARS clears MAKEFLAGS too, so the sub-make gets the command-line
+# variables from SUB_MAKE, as command-line variables again. Each one is a
+# single shell word holding the value this make sees: single-quoted, with
+# ' escaped for the shell and $ for the sub-make. Only the shell running
+# the recipe parses it, so quotes, $ and spaces reach the sub-make intact.
+SUB_MAKE_ARG = '$(subst ','\'',$1=$(subst $$,$$$$,$($1)))'
+SUB_MAKE = $(MAKE) $(foreach V,$(COMMAND_LINE_ARGS),$(call SUB_MAKE_ARG,$V)) --no-print-directory $(FILE_MAKEFILE) DESIGN_CONFIG=$(DESIGN_CONFIG)
+UNSET_AND_MAKE = @bash -c '$(UNSET_VARS); "$$@"' -- $(SUB_MAKE)
 
 $(OBJECTS_DIR)/copyright.txt:
 	@$(OPENROAD_CMD) $(SCRIPTS_DIR)/noop.tcl
@@ -387,9 +398,6 @@ web_$(1):
 	$(2)=$(RESULTS_DIR)/$(1) $(OPENROAD_WEB_CMD) $(SCRIPTS_DIR)/open.tcl
 endef
 
-# Enables "make gui_5_1_grt-failed"
-$(eval $(call OPEN_GUI_SHORTCUT,5_1_grt-failed,5_1_grt-failed.odb))
-
 # Separate dependency checking and doing a step. This can
 # be useful to retest a stage without having to delete the
 # target, or when building a wafer thin layer on top of
@@ -404,7 +412,7 @@ $(eval $(call OPEN_GUI_SHORTCUT,5_1_grt-failed,5_1_grt-failed.odb))
 # A "do-synth" step would be welcomed, but it isn't strictly necessary
 # for the Bazel use-case.
 #
-# do-floorplan, do-place, do-cts, do-route, do-finish are the
+# do-floorplan, do-place, do-cts, do-grt, do-route, do-finish are the
 # supported interface to execute those stages without checking
 # for dependencies.
 #
@@ -425,6 +433,9 @@ ifeq ($(if $(4),$(4),.odb),.odb)
 $(1): $(RESULTS_DIR)/$(1).odb
 
 $(eval $(call OPEN_GUI_SHORTCUT,$(1),$(1).odb))
+# "make gui_<step>-failed" opens the checkpoint run_step.tcl writes when
+# the step fails
+$(eval $(call OPEN_GUI_SHORTCUT,$(1)-failed,$(1)-failed.odb))
 endif
 
 .PHONY: do-$(1)
@@ -452,7 +463,7 @@ endef
 # ==============================================================================
 
 # Custom target to go from synthesis to placement in a single OpenROAD run
-$(eval $(call do-step,1_3_floorplan_to_place, $(RESULTS_DIR)/1_synth.odb,floorplan_to_place))
+$(eval $(call do-step,1_3_floorplan_to_place, $(INPUT_RESULTS_DIR)/1_synth.odb,floorplan_to_place))
 
 $(eval $(call OPEN_GUI_SHORTCUT,yosys,1_2_yosys.v))
 
@@ -488,7 +499,7 @@ ifneq ($(filter 1,$(LEC_CHECK) $(SEC_CHECK)),)
 $(RESULTS_DIR)/1_synth_lec.v: | check-kepler-formal
 endif
 
-$(eval $(call do-step,2_1_floorplan,$(RESULTS_DIR)/1_synth.odb $(TECH_LEF) $(SC_LEF) $(ADDITIONAL_LEFS) $(FOOTPRINT) $(SIG_MAP_FILE) $(FOOTPRINT_TCL) $(LIB_FILES) $(IO_CONSTRAINTS),floorplan))
+$(eval $(call do-step,2_1_floorplan,$(INPUT_RESULTS_DIR)/1_synth.odb $(TECH_LEF) $(SC_LEF) $(ADDITIONAL_LEFS) $(FOOTPRINT) $(SIG_MAP_FILE) $(FOOTPRINT_TCL) $(LIB_FILES) $(IO_CONSTRAINTS),floorplan))
 
 # STEP 2: Macro Placement
 #-------------------------------------------------------------------------------
@@ -526,7 +537,7 @@ place: $(RESULTS_DIR)/3_place.odb
 # ==============================================================================
 # STEP 1: Global placement without placed IOs, timing-driven, and routability-driven.
 #-------------------------------------------------------------------------------
-$(eval $(call do-step,3_1_place_gp_skip_io,$(RESULTS_DIR)/2_floorplan.odb $(LIB_FILES),global_place_skip_io))
+$(eval $(call do-step,3_1_place_gp_skip_io,$(INPUT_RESULTS_DIR)/2_floorplan.odb $(LIB_FILES),global_place_skip_io))
 
 $(eval $(call do-step,3_2_place_iop,$(RESULTS_DIR)/3_1_place_gp_skip_io.odb,io_placement))
 
@@ -580,7 +591,7 @@ ifeq ($(LEC_CHECK),1)
 DO_STEP_DEPS_4_1_cts += check-kepler-formal
 endif
 
-$(eval $(call do-step,4_1_cts,$(RESULTS_DIR)/3_place.odb,cts))
+$(eval $(call do-step,4_1_cts,$(INPUT_RESULTS_DIR)/3_place.odb,cts))
 
 ifeq ($(LEC_CHECK),1)
 $(RESULTS_DIR)/4_1_cts.odb: | check-kepler-formal
@@ -618,11 +629,11 @@ grt: $(RESULTS_DIR)/5_1_grt.odb
 
 # STEP 1: Run global route
 #-------------------------------------------------------------------------------
-$(eval $(call do-step,5_1_grt,$(RESULTS_DIR)/4_cts.odb $(FASTROUTE_TCL) $(PRE_GLOBAL_ROUTE_TCL),global_route))
+$(eval $(call do-step,5_1_grt,$(INPUT_RESULTS_DIR)/4_cts.odb $(FASTROUTE_TCL) $(PRE_GLOBAL_ROUTE_TCL),global_route))
 
 # STEP 2: Run detailed route
 #-------------------------------------------------------------------------------
-$(eval $(call do-step,5_2_route,$(RESULTS_DIR)/5_1_grt.odb,detail_route))
+$(eval $(call do-step,5_2_route,$(INPUT_RESULTS_DIR)/5_1_grt.odb,detail_route))
 
 $(eval $(call do-step,5_3_fillcell,$(RESULTS_DIR)/5_2_route.odb,fillcell))
 
@@ -630,7 +641,7 @@ $(eval $(call do-copy,5_route,5_3_fillcell))
 
 .PHONY: do-route
 do-route:
-	$(UNSET_AND_MAKE) do-5_1_grt do-5_2_route do-5_3_fillcell do-5_route
+	$(UNSET_AND_MAKE) do-5_2_route do-5_3_fillcell do-5_route
 
 .PHONY: do-grt
 do-grt:
@@ -642,21 +653,6 @@ clean_route:
 	rm -rf $(RESULTS_DIR)/5_*.odb $(RESULTS_DIR)/5_*.sdc $(RESULTS_DIR)/5_*.def $(RESULTS_DIR)/5_*.v
 	rm -f  $(REPORTS_DIR)/5_*
 	rm -f  $(LOG_DIR)/5_*
-
-.PHONY: klayout_tr_rpt
-klayout_tr_rpt: $(RESULTS_DIR)/5_route.def $(OBJECTS_DIR)/klayout.lyt
-	$(SCRIPTS_DIR)/klayout.sh -rd in_drc="$(REPORTS_DIR)/5_route_drc.rpt" \
-	        -rd in_def="$<" \
-	        -rd tech_file=$(OBJECTS_DIR)/klayout.lyt \
-	        -rm $(UTILS_DIR)/viewDrc.py
-
-.PHONY: klayout_guides
-klayout_guides: $(RESULTS_DIR)/5_route.def $(OBJECTS_DIR)/klayout.lyt
-	$(SCRIPTS_DIR)/klayout.sh -rd in_guide="$(RESULTS_DIR)/route.guide" \
-	        -rd in_def="$<" \
-	        -rd net_name=$(GUIDE_NET) \
-	        -rd tech_file=$(OBJECTS_DIR)/klayout.lyt \
-	        -rm $(UTILS_DIR)/viewGuide.py
 
 # ==============================================================================
 #  _____ ___ _   _ ___ ____  _   _ ___ _   _  ____
@@ -680,7 +676,7 @@ elapsed:
 elapsed-all:
 	@$(PYTHON_EXE) $(UTILS_DIR)/genElapsedTime.py -d $(shell find $(WORK_HOME)/logs/$(PLATFORM)/*/*/ -type d)
 
-$(eval $(call do-step,6_1_fill,$(RESULTS_DIR)/5_route.odb $(FILL_CONFIG),density_fill))
+$(eval $(call do-step,6_1_fill,$(INPUT_RESULTS_DIR)/5_route.odb $(FILL_CONFIG),density_fill))
 
 ifneq ($(filter 1,$(LEC_CHECK) $(SEC_CHECK)),)
 DO_STEP_DEPS_6_report += check-kepler-formal
@@ -729,7 +725,7 @@ clean_abstract:
 check-klayout:
 	@if [ -z "$(KLAYOUT_CMD)" ]; then \
 		echo "Error: KLayout not found. Install KLayout or set KLAYOUT_CMD."; \
-		echo "Hint: KLayout is needed for GDS/DRC/LVS targets."; \
+		echo "Hint: KLayout is needed for DRC, LVS, the gallery and the viewers."; \
 		exit 1; \
 	fi
 
@@ -740,32 +736,30 @@ gds: $(GDS_FINAL_FILE)
 #-------------------------------------------------------------------------------
 $(WRAPPED_GDSOAS): $(OBJECTS_DIR)/klayout_wrap.lyt $(WRAPPED_LEFS)
 	$(RUN_CMD) --log $(abspath $(LOG_DIR)/6_merge_$(basename $(notdir $@)).log) --tee -- \
-	        $(SCRIPTS_DIR)/klayout.sh -zz -rd design_name=$(basename $(notdir $@)) \
-	        -rd in_def=$(OBJECTS_DIR)/def/$(notdir $(@:$(STREAM_SYSTEM_EXT)=def)) \
-	        -rd in_files="$(ADDITIONAL_GDSOAS)" \
-	        -rd config_file=$(FILL_CONFIG) \
-	        -rd seal_file="" \
-	        -rd out_file=$@ \
-	        -rd tech_file=$(OBJECTS_DIR)/klayout_wrap.lyt \
-	        -rd layer_map=$(GDS_LAYER_MAP) \
-	        -r $(UTILS_DIR)/def2stream.py
+	        $(PYTHON_EXE) $(UTILS_DIR)/def2stream.py \
+	        --design-name=$(basename $(notdir $@)) \
+	        --in-def=$(OBJECTS_DIR)/def/$(notdir $(@:$(STREAM_SYSTEM_EXT)=def)) \
+	        --in-files="$(ADDITIONAL_GDSOAS)" \
+	        --out-file=$@ \
+	        --tech-file=$(OBJECTS_DIR)/klayout_wrap.lyt \
+	        --layer-map=$(GDS_LAYER_MAP)
 
 # Merge GDS using Klayout
 #-------------------------------------------------------------------------------
-$(GDS_MERGED_FILE): $(RESULTS_DIR)/6_final.def $(OBJECTS_DIR)/klayout.lyt $(GDSOAS_FILES) $(WRAPPED_GDSOAS) $(SEAL_GDSOAS) | check-klayout
+$(GDS_MERGED_FILE): $(RESULTS_DIR)/6_final.def $(OBJECTS_DIR)/klayout.lyt $(GDSOAS_FILES) $(WRAPPED_GDSOAS) $(SEAL_GDSOAS)
 	$(UNSET_AND_MAKE) do-gds-merged
 
 .PHONY: do-gds-merged
 do-gds-merged:
 	$(RUN_CMD) --log $(abspath $(LOG_DIR)/6_1_merge.log) --tee -- \
-	        $(SCRIPTS_DIR)/klayout.sh -zz -rd design_name=$(DESIGN_NAME) \
-	        -rd in_def=$(RESULTS_DIR)/6_final.def \
-	        -rd in_files="$(GDSOAS_FILES) $(WRAPPED_GDSOAS)" \
-	        -rd seal_file="$(SEAL_GDSOAS)" \
-	        -rd out_file=$(GDS_MERGED_FILE) \
-	        -rd tech_file=$(OBJECTS_DIR)/klayout.lyt \
-	        -rd layer_map=$(GDS_LAYER_MAP) \
-	        -r $(UTILS_DIR)/def2stream.py
+	        $(PYTHON_EXE) $(UTILS_DIR)/def2stream.py \
+	        --design-name=$(DESIGN_NAME) \
+	        --in-def=$(RESULTS_DIR)/6_final.def \
+	        --in-files="$(GDSOAS_FILES) $(WRAPPED_GDSOAS)" \
+	        --seal-file="$(SEAL_GDSOAS)" \
+	        --out-file=$(GDS_MERGED_FILE) \
+	        --tech-file=$(OBJECTS_DIR)/klayout.lyt \
+	        --layer-map=$(GDS_LAYER_MAP)
 
 $(RESULTS_DIR)/6_final.v: $(LOG_DIR)/6_report.log
 
@@ -780,12 +774,18 @@ $(GDS_FINAL_FILE): $(GDS_MERGED_FILE)
 .PHONY: drc
 drc: $(REPORTS_DIR)/6_drc.lyrdb
 
-$(REPORTS_DIR)/6_drc.lyrdb: $(GDS_FINAL_FILE) $(KLAYOUT_DRC_FILE)
+$(REPORTS_DIR)/6_drc.lyrdb: $(GDS_FINAL_FILE) $(KLAYOUT_DRC_FILE) $(if $(filter %.py,$(KLAYOUT_DRC_FILE)),$(UTILS_DIR)/klayout_drc.py) $(if $(filter-out %.py,$(KLAYOUT_DRC_FILE)),| check-klayout)
 ifneq ($(KLAYOUT_DRC_FILE),)
+	$(if $(filter %.py,$(KLAYOUT_DRC_FILE)),,@echo "WARNING: $(KLAYOUT_DRC_FILE) is a Ruby KLayout deck; Ruby decks are deprecated and need a KLayout application you install yourself, see docs/user/KLayoutPythonDecks.md")
 	$(RUN_CMD) --log $(abspath $(LOG_DIR)/6_drc.log) --tee -- \
-	        $(SCRIPTS_DIR)/klayout.sh -zz -rd in_gds="$<" \
+	        $(if $(filter %.py,$(KLAYOUT_DRC_FILE)), \
+	        $(PYTHON_EXE) $(UTILS_DIR)/klayout_drc.py \
+	        --deck=$(KLAYOUT_DRC_FILE) \
+	        --in-gds=$< \
+	        --report-file=$(abspath $@), \
+	        $(or $(KLAYOUT_CMD),$(error KLayout not found. Install KLayout or set KLAYOUT_CMD)) -zz -rd in_gds="$<" \
 	        -rd report_file=$(abspath $@) \
-	        -r $(KLAYOUT_DRC_FILE)
+	        -r $(KLAYOUT_DRC_FILE))
 	# Hacky way of getting DRV count (don't error on no matches)
 	grep -c "<value>" $@ > $(REPORTS_DIR)/6_drc_count.rpt || [[ $$? == 1 ]]
 else
@@ -801,14 +801,22 @@ $(OBJECTS_DIR)/6_final_concat.cdl: $(RESULTS_DIR)/6_final.cdl $(CDL_FILE)
 .PHONY: lvs
 lvs: $(RESULTS_DIR)/6_lvs.lvsdb
 
-$(RESULTS_DIR)/6_lvs.lvsdb: $(GDS_FINAL_FILE) $(KLAYOUT_LVS_FILE) $(OBJECTS_DIR)/6_final_concat.cdl
+$(RESULTS_DIR)/6_lvs.lvsdb: $(GDS_FINAL_FILE) $(KLAYOUT_LVS_FILE) $(OBJECTS_DIR)/6_final_concat.cdl $(if $(filter %.py,$(KLAYOUT_LVS_FILE)),$(UTILS_DIR)/klayout_lvs.py $(UTILS_DIR)/klayout_drc.py) $(if $(filter-out %.py,$(KLAYOUT_LVS_FILE)),| check-klayout)
 ifneq ($(KLAYOUT_LVS_FILE),)
+	$(if $(filter %.py,$(KLAYOUT_LVS_FILE)),,@echo "WARNING: $(KLAYOUT_LVS_FILE) is a Ruby KLayout deck; Ruby decks are deprecated and need a KLayout application you install yourself, see docs/user/KLayoutPythonDecks.md")
 	$(RUN_CMD) --log $(abspath $(LOG_DIR)/6_lvs.log) --tee -- \
-	        $(SCRIPTS_DIR)/klayout.sh -b -rd in_gds="$<" \
+	        $(if $(filter %.py,$(KLAYOUT_LVS_FILE)), \
+	        $(PYTHON_EXE) $(UTILS_DIR)/klayout_lvs.py \
+	        --deck=$(KLAYOUT_LVS_FILE) \
+	        --in-gds=$< \
+	        --cdl-file=$(abspath $(OBJECTS_DIR)/6_final_concat.cdl) \
+	        --top-cell=$(DESIGN_NAME) \
+	        --report-file=$(abspath $@), \
+	        $(or $(KLAYOUT_CMD),$(error KLayout not found. Install KLayout or set KLAYOUT_CMD)) -b -rd in_gds="$<" \
 	        -rd cdl_file=$(abspath $(OBJECTS_DIR)/6_final_concat.cdl) \
 	        -rd top_cell="$(DESIGN_NAME)" \
 	        -rd report_file=$(abspath $@) \
-	        -r $(KLAYOUT_LVS_FILE)
+	        -r $(KLAYOUT_LVS_FILE))
 else
 	echo "LVS not supported on this platform" > $@
 endif
@@ -860,7 +868,7 @@ clean_all: clean_synth clean_floorplan clean_place clean_cts clean_route clean_f
 	rm -f $(LOG_DIR)/write_binary_libs*.log
 
 .PHONY: nuke
-nuke: clean_test clean_issues
+nuke: clean_issues
 	rm -rf $(WORK_HOME)/results $(WORK_HOME)/logs $(WORK_HOME)/reports $(WORK_HOME)/objects
 	rm -f $(OBJECTS_DIR)/copyright.txt
 
@@ -868,7 +876,7 @@ nuke: clean_test clean_issues
 #-------------------------------------------------------------------------------
 .PHONY: $(foreach file,$(RESULTS_DEF) $(RESULTS_GDS) $(RESULTS_OAS),klayout_$(file))
 $(foreach file,$(RESULTS_DEF) $(RESULTS_GDS) $(RESULTS_OAS),klayout_$(file)): klayout_%: check-klayout $(OBJECTS_DIR)/klayout.lyt
-	$(SCRIPTS_DIR)/klayout.sh -nn $(OBJECTS_DIR)/klayout.lyt $(RESULTS_DIR)/$*
+	$(KLAYOUT_CMD) -nn $(OBJECTS_DIR)/klayout.lyt $(RESULTS_DIR)/$*
 
 $(eval $(call OPEN_GUI_SHORTCUT,synth,1_synth.odb))
 $(eval $(call OPEN_GUI_SHORTCUT,floorplan,2_floorplan.odb))
@@ -913,19 +921,10 @@ handoff : all_defs all_verilog
 .PHONY: test-unset-and-make-%
 test-unset-and-make-%: ; $(UNSET_AND_MAKE) $*
 
-.phony: klayout
-klayout:
-	$(SCRIPTS_DIR)/klayout.sh
-
-.phony: run
+.PHONY: run
 run:
 	@mkdir -p $(RESULTS_DIR) $(LOG_DIR) $(REPORTS_DIR) $(OBJECTS_DIR)
 	$(RUN_CMD) --log $(abspath $(LOG_DIR)/$(RUN_LOG_NAME_STEM).log) --tee -- $(OPENROAD_CMD) -no_splash $(if $(filter %.py,$(RUN_SCRIPT)),-python) $(RUN_SCRIPT)
-
-export RUN_YOSYS_ARGS ?= -c $(SCRIPTS_DIR)/yosys_keep.tcl
-.phony: run-yosys
-run-yosys:
-	$(YOSYS_EXE) $(RUN_YOSYS_ARGS)
 
 # Utilities
 #-------------------------------------------------------------------------------

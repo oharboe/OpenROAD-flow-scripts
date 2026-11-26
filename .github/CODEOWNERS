@@ -19,11 +19,9 @@
 /docker/                        @The-OpenROAD-Project/openroad-devops
 /tools/.dockerignore            @The-OpenROAD-Project/openroad-devops
 /tools/codespace/               @The-OpenROAD-Project/openroad-devops
-/tools/yosys_util/              @The-OpenROAD-Project/openroad-devops
 /tools/AutoTuner/docker-compose.yml @The-OpenROAD-Project/openroad-devops
 
 # Bazel build support.
-/bazel/                         @The-OpenROAD-Project/openroad-devops
 /.bazelversion                  @The-OpenROAD-Project/openroad-devops
 /.bazelignore                   @The-OpenROAD-Project/openroad-devops
 
