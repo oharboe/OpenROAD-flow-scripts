@@ -30,9 +30,13 @@ metadata-generate:
 # The QoR gate: metadata.json against the QoR dashboard's baseline for the
 # commit it records (the master build at its merge base, from the first of
 # the dashboard's default pipelines that has the design), using the
-# dashboard's rule configs. An unpushed commit's merge base is computed
-# locally against DASHBOARD_MERGE_BASE (default origin/master); without one
-# the latest master build is used, with a warning. Set DASHBOARD_BASE_COMMIT
+# dashboard's rule configs. If no local remote-tracking ref contains the local
+# commit, compute its merge base against DASHBOARD_MERGE_BASE (default
+# refs/remotes/upstream/master if it names a commit, else
+# refs/remotes/origin/master).
+# If the pinned build is missing, warn and send the run unpinned. When local
+# pinning applies, warn for a default ref that gives no merge base and fail
+# for an explicit ref that gives no merge base. Set DASHBOARD_BASE_COMMIT
 # to pin the baseline, DASHBOARD_API_KEY for a private platform and
 # DASHBOARD_JOB_NAME to check as a build of one pipeline instead. A failed
 # rule fails the target; an unreachable dashboard or a design without a
@@ -130,7 +134,7 @@ endef
 .PHONY: $(foreach script,$(ISSUE_SCRIPTS),$(script)_issue)
 
 $(foreach script,$(ISSUE_SCRIPTS),$(script)_issue): %_issue :
-	$(UTILS_DIR)/makeIssue.sh $(WORK_HOME)/$*
+	$(PYTHON_EXE) $(UTILS_DIR)/makeIssue.py $(WORK_HOME)/$*
 
 .PHONY: clean_issues
 clean_issues:
@@ -164,16 +168,6 @@ view_cells_web:
 .PHONY: command
 command:
 	$(OPENROAD_NO_EXIT_CMD)
-
-## Provide easy access to debugging
-ifdef GDB
-export OPENROAD_EXE := gdb --args $(OPENROAD_EXE)
-endif
-
-## Provide easy way to run valgrind
-ifdef VALGRIND
-export OPENROAD_EXE := valgrind $(VALGRIND_ARGS) $(OPENROAD_EXE)
-endif
 
 ## Convert RVE DRC database to JSON
 .PHONY: convert_rve
