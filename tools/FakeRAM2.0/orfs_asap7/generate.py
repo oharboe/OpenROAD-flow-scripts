@@ -11,6 +11,9 @@ single-port RAM whose ports carry the module's names.
 A memory whose pins were synthesized by the detector rather than read off
 the module (port_convention "") has no such names and gets FakeRAM's
 historical single-port pins, which is what earlier ORFS releases emitted.
+
+Only the views are written here; gen_memories.py, which runs this, lists
+the macros in blackboxes.txt once every view exists.
 """
 
 import json
@@ -38,6 +41,15 @@ ASAP7_PROCESS_CONFIG = {
     "fin_pitch_nm": 27,
     "snap_width_nm": 190,
     "snap_height_nm": 1400,
+    # A macro's power pins are horizontal M4 rails, which the platform's
+    # macro grid connects to the core's vertical M5 straps
+    # (openRoad/pdn/grid_strategy-M1-M2-M5-M6.tcl: each net every 5.4 um,
+    # 0.12 um wide). A narrower macro can sit between two straps of a
+    # net, its grid gets no shapes and pdngen fails the whole design
+    # (PDN-0233, or PDN-0179 when it cannot repair the channels). One pitch plus a strap, plus the rails' 0.048 um inset
+    # at both edges, puts a strap of each net across the rails wherever
+    # the macro lands.
+    "min_width_um": 5.4 + 0.12 + 2 * 0.048,
 }
 
 ASAP7_TIMING_CONFIG = {
@@ -120,7 +132,6 @@ def run_orfs_asap7(platform: str, out_dir: Path, json_path: Path):
     process = Process(ASAP7_PROCESS_CONFIG)
     timing_data = TimingData(ASAP7_TIMING_CONFIG)
 
-    blackboxes = []
     for m in converted:
         name = m["name"]
         bits = int(m.get("bits", 32))
@@ -146,6 +157,7 @@ def run_orfs_asap7(platform: str, out_dir: Path, json_path: Path):
             "additional_height": additional_height_for_pins(process, bits, rows, lanes),
             "pin_names": pin_names,
             "mask_lanes": lanes,
+            "mask_lane_width": int(m.get("mask_lane_width", 0)),
         }
         mem_config = MemoryConfig.from_json(sram_dict)
         ram = MemoryFactory.create(mem_config, "RAM", "SP", process, timing_data)
@@ -164,9 +176,4 @@ def run_orfs_asap7(platform: str, out_dir: Path, json_path: Path):
         with open(lef_path, "w") as f:
             LefExporter(ram).export(f)
 
-        # the area the .lib states, beside the name: synthesis costs the
-        # blackbox by it
-        blackboxes.append(f"{name} {ram.physical.get_area(False):.6f}\n")
-
-    (out_dir / "blackboxes.txt").write_text("".join(blackboxes))
     return 0
