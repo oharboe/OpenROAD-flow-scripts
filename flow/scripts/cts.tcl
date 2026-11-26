@@ -9,72 +9,57 @@ source_step_tcl PRE CTS
 # so cts does not try to buffer the inverted clocks.
 repair_clock_inverters
 
-proc save_progress { stage } {
-  puts "Run 'make gui_$stage.odb' to load progress snapshot"
-  orfs_write_db $::env(RESULTS_DIR)/$stage.odb
-}
-
 # Run CTS
-set cts_args [list \
-  -sink_clustering_enable \
-  -repair_clock_nets]
+set deprecated {}
+append_env_var deprecated CTS_BUF_DISTANCE -distance_between_buffers 1
+append_env_var deprecated CTS_CLUSTER_SIZE -sink_clustering_size 1
+append_env_var deprecated CTS_CLUSTER_DIAMETER -sink_clustering_max_diameter 1
+append_env_var deprecated CTS_BUF_LIST -buf_list 1
+append_env_var deprecated CTS_LIB_NAME -library 1
+append_env_var deprecated CTS_USEFUL_SKEW -useful_skew 0
+set cts_args [list -sink_clustering_enable -repair_clock_nets {*}$deprecated]
 
-append_env_var cts_args CTS_BUF_DISTANCE -distance_between_buffers 1
-append_env_var cts_args CTS_CLUSTER_SIZE -sink_clustering_size 1
-append_env_var cts_args CTS_CLUSTER_DIAMETER -sink_clustering_max_diameter 1
-append_env_var cts_args CTS_BUF_LIST -buf_list 1
-append_env_var cts_args CTS_LIB_NAME -library 1
-
-
+# CTS_ARGS, deprecated, replaces the flow's arguments.
 if { [env_var_exists_and_non_empty CTS_ARGS] } {
   set cts_args $::env(CTS_ARGS)
+  set deprecated $cts_args
 }
 
 set_dont_use $::env(DONT_USE_CELLS)
 
-log_cmd clock_tree_synthesis {*}$cts_args
+log_cmd clock_tree_synthesis \
+  {*}[command_args clock_tree_synthesis cts.main $cts_args $deprecated]
 
-utl::push_metrics_stage "cts__{}__pre_repair_timing"
-log_cmd estimate_parasitics
-if { $::env(DETAILED_METRICS) } {
+# The estimate before detailed placement feeds only this report.
+if { [command_runs report_metrics cts.cts_pre_repair_timing $::env(DETAILED_METRICS)] } {
+  utl::push_metrics_stage "cts__{}__pre_repair_timing"
+  log_cmd estimate_parasitics
   report_metrics 4 "cts pre-repair-timing"
+  utl::pop_metrics_stage
 }
-utl::pop_metrics_stage
 
 set_placement_padding -global \
   -left $::env(CELL_PAD_IN_SITES_DETAIL_PLACEMENT) \
   -right $::env(CELL_PAD_IN_SITES_DETAIL_PLACEMENT)
 
-set result [catch { detailed_placement_helper -quiet } msg]
-if { $result != 0 } {
-  save_progress 4_1_error
-  error "Detailed placement failed in CTS: $msg"
-}
+detailed_placement_helper cts.main -quiet
 
 log_cmd estimate_parasitics
 
-if { $::env(CTS_SNAPSHOTS) } {
-  save_progress 4_1_pre_repair_setup_hold
-}
-
-if { !$::env(SKIP_CTS_REPAIR_TIMING) } {
+if { [command_runs repair_timing cts.main [expr { !$::env(SKIP_CTS_REPAIR_TIMING) }]] } {
   set lec_enabled [lec_check_enabled]
   if { $lec_enabled } {
     write_lec_verilog 4_before_rsz_lec.v
   }
 
-  repair_timing_helper
+  repair_timing_helper cts.main
 
   if { $lec_enabled } {
     write_lec_verilog 4_after_rsz_lec.v
     run_lec_test 4_rsz 4_before_rsz_lec.v 4_after_rsz_lec.v
   }
 
-  set result [catch { detailed_placement_helper -quiet } msg]
-  if { $result != 0 } {
-    save_progress 4_1_error
-    error "Detailed placement failed in CTS: $msg"
-  }
+  detailed_placement_helper cts.repair_timing -quiet
 
   log_cmd check_placement -placeable -verbose
 

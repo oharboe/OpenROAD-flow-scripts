@@ -11,10 +11,15 @@ proc load_design { design_file } {
 # variant FLOW_INPUT_VARIANT names.
 proc load_stage_input { design_file } {
   if { $::env(INPUT_RESULTS_DIR) ne $::env(RESULTS_DIR) } {
-    if { $::env(AUTO_MEMORIES) } {
-      error "AUTO_MEMORIES=1 reads the memories synthesised in this variant,\
-        $::env(FLOW_VARIANT), and FLOW_INPUT_VARIANT=$::env(FLOW_INPUT_VARIANT)\
-        reads the design from another"
+    if {
+      $::env(AUTO_MEMORIES)
+      && [file normalize $::env(AUTO_MEMORIES_DIR)]
+      eq [file normalize $::env(RESULTS_DIR)/memories]
+    } {
+      error "AUTO_MEMORIES=1 reads the memories from AUTO_MEMORIES_DIR, this\
+        variant's, $::env(FLOW_VARIANT), and FLOW_INPUT_VARIANT=$::env(FLOW_INPUT_VARIANT)\
+        reads the design from another. Set AUTO_MEMORIES_DIR to the memories of\
+        the variant that synthesised them, for every stage the variant runs."
     }
     if { [file exists $::env(RESULTS_DIR)/$design_file] } {
       error "$design_file is in both FLOW_VARIANT=$::env(FLOW_VARIANT) and\
@@ -76,8 +81,5 @@ proc load_design_from { dir design_file } {
     log_cmd set_wire_load_model -name $::env(WIRE_LOAD_MODEL)
   }
 
-  if { [env_var_equals LIB_MODEL CCS] } {
-    puts "Using CCS delay calculation"
-    log_cmd set_delay_calculator prima
-  }
+  use_ccs_delay_calculator
 }
