@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -539,6 +540,24 @@ def _module_header_ports(verilog: str, module: str) -> dict[str, tuple[str, int]
     return ports
 
 
+def _folds(width: float, height: float, span_um: float, bits: int) -> int:
+    """How many rows to fold a word of `bits` into, a power of two, for an
+    array width by height with a word span_um long in a row (see
+    generate)."""
+    folds = 1
+    # a short last fold is allowed, an empty one is not
+    while (
+        folds * 2 <= bits
+        and (folds * 2 - 1) * -(-bits // (folds * 2)) < bits
+        and (
+            (width > 8 * height and (folds * 2) ** 2 <= 2 * width / height)
+            or span_um / folds > WORD_SPAN_UM
+        )
+    ):
+        folds *= 2
+    return folds
+
+
 def generate(
     spec: Path,
     module: str,
@@ -575,7 +594,9 @@ def generate(
             + 'puts $f "[$die dx] [$die dy] [[ord::get_db_tech] getDbUnitsPerMicron]"\n'
             + "close $f\n"
         )
-        subprocess.check_call([openroad, "-exit", "-no_init", "-no_splash", str(gen)])
+        subprocess.check_call(
+            [*shlex.split(openroad), "-exit", "-no_init", "-no_splash", str(gen)]
+        )
         width, height, _ = outline.read_text().split()
         return float(width), float(height)
 
@@ -593,7 +614,8 @@ def generate(
     #   (XiangShan's RenameBufferFile, a word a row 258 um wide, failed;
     #   RobEntryFile at 74 um and IntRegFile at 96 um a word did not).
     #
-    # A spec names bit_folds to choose.
+    # A spec may name bit_folds, but not fewer than the rule would fold
+    # the array it names: that is refused, not overridden.
     bits = int(_one(lines, "bits"))
     dbu = float(outline.read_text().split()[2])
     # the words side by side in a row, each contiguous (see _args) unless
@@ -605,20 +627,20 @@ def generate(
     )
     span_um = width / dbu / row_words
     if not _values(lines, "bit_folds"):
-        folds = 1
-        # a short last fold is allowed, an empty one is not
-        while (
-            folds * 2 <= bits
-            and (folds * 2 - 1) * -(-bits // (folds * 2)) < bits
-            and (
-                (width > 8 * height and (folds * 2) ** 2 <= 2 * width / height)
-                or span_um / folds > WORD_SPAN_UM
-            )
-        ):
-            folds *= 2
+        folds = _folds(width, height, span_um, bits)
         if folds > 1:
             lines = lines + [["bit_folds", str(folds)]]
             build(lines)
+    else:
+        named = int(_one(lines, "bit_folds"))
+        more = _folds(width, height, span_um, -(-bits // named))
+        if more > 1:
+            raise SystemExit(
+                f"regfile_ram: {spec}: bit_folds {named} leaves the array"
+                f" {width / height:.1f} times as wide as tall and a word"
+                f" {span_um:.0f} um long; the fold rule folds it"
+                f" {named * more} times: leave bit_folds out, or name that"
+            )
     views = out_dir / f"{module}.views.tcl"
     tcl = reads + f"read_db {out_dir / f'{block}.odb'}\n"
     # the RTL's flop names, for equivalence checking
@@ -643,7 +665,9 @@ def generate(
     else:
         tcl += _MACRO_TCL.format(out=out_dir, block=block)
     views.write_text(tcl)
-    subprocess.check_call([openroad, "-exit", "-no_init", "-no_splash", str(views)])
+    subprocess.check_call(
+        [*shlex.split(openroad), "-exit", "-no_init", "-no_splash", str(views)]
+    )
     core_ports = _buses((out_dir / f"{block}.ports").read_text().splitlines())
     ram_ports = core_ports
     periphery = ""
