@@ -120,6 +120,7 @@ export MIN_CLK_ROUTING_LAYER ?= met3
 export MAX_ROUTING_LAYER ?= met5
 
 export OPT_POST_GRT_WNS ?= 0
+export GLOBAL_ROUTE_USE_CUGR ?= 1
 
 #
 # Define fastRoute tcl
@@ -148,9 +149,9 @@ export GND_NETS_VOLTAGES  ?= VSS 0.0
 export IR_DROP_LAYER ?= met1
 
 # DRC Check
-export KLAYOUT_DRC_FILE = $(PLATFORM_DIR)/drc/$(PLATFORM).lydrc
+export KLAYOUT_DRC_FILE ?= $(PLATFORM_DIR)/drc/$(PLATFORM)_drc.py
 
 #LVS Check
 export CDL_FILE = $(PLATFORM_DIR)/cdl/$(PLATFORM).cdl
-export KLAYOUT_LVS_FILE = $(PLATFORM_DIR)/lvs/$(PLATFORM).lylvs
+export KLAYOUT_LVS_FILE ?= $(PLATFORM_DIR)/lvs/$(PLATFORM)_lvs.py
 export REMOVE_CELLS_FOR_LEC = sky130_fd_sc_hd__tapvpwrvgnd*
