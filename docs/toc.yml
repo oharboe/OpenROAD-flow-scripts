@@ -21,8 +21,12 @@ entries:
     title: Adding New Designs to the ORFS
   - file: user/FlowVariables.md
     title: Flow Variables
+  - file: user/CommandArguments.md
+    title: Command Arguments
   - file: user/AutoMemories.md
     title: Generated Memory Macros (AUTO_MEMORIES)
+  - file: user/KLayoutPythonDecks.md
+    title: KLayout DRC and LVS Decks in Python
   - file: user/LargeDesigns.md
     title: Tips on building large design
   - file: contrib/Metrics.md
@@ -47,6 +51,8 @@ entries:
     title: Guide to Integrate a New Platform into the OpenROAD Flow
   - file: contrib/CI.md
     title: CI Guide
+  - file: contrib/MakefileContract.md
+    title: Makefile Contract
   - file: contrib/EndpointSlackTracking.md
     title: Tracking Endpoint Slack Across Flow Steps
 
