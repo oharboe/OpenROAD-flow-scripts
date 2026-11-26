@@ -59,6 +59,7 @@ export IO_PLACER_H ?= met3
 export IO_PLACER_V ?= met2
 
 # Define default PDN config
+export GLOBAL_CONNECT_TCL ?= $(PLATFORM_DIR)/global_connect.tcl
 export PDN_TCL ?= $(PLATFORM_DIR)/pdn.tcl
 
 # Endcap and Welltie cells
@@ -81,6 +82,7 @@ export MIN_CLK_ROUTING_LAYER = met3
 export MAX_ROUTING_LAYER = met5
 
 export OPT_POST_GRT_WNS ?= 0
+export GLOBAL_ROUTE_USE_CUGR ?= 1
 
 #
 # Define fastRoute tcl
