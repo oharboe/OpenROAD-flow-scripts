@@ -654,21 +654,6 @@ clean_route:
 	rm -f  $(REPORTS_DIR)/5_*
 	rm -f  $(LOG_DIR)/5_*
 
-.PHONY: klayout_tr_rpt
-klayout_tr_rpt: $(RESULTS_DIR)/5_route.def $(OBJECTS_DIR)/klayout.lyt
-	$(SCRIPTS_DIR)/klayout.sh -rd in_drc="$(REPORTS_DIR)/5_route_drc.rpt" \
-	        -rd in_def="$<" \
-	        -rd tech_file=$(OBJECTS_DIR)/klayout.lyt \
-	        -rm $(UTILS_DIR)/viewDrc.py
-
-.PHONY: klayout_guides
-klayout_guides: $(RESULTS_DIR)/5_route.def $(OBJECTS_DIR)/klayout.lyt
-	$(SCRIPTS_DIR)/klayout.sh -rd in_guide="$(RESULTS_DIR)/route.guide" \
-	        -rd in_def="$<" \
-	        -rd net_name=$(GUIDE_NET) \
-	        -rd tech_file=$(OBJECTS_DIR)/klayout.lyt \
-	        -rm $(UTILS_DIR)/viewGuide.py
-
 # ==============================================================================
 #  _____ ___ _   _ ___ ____  _   _ ___ _   _  ____
 # |  ___|_ _| \ | |_ _/ ___|| | | |_ _| \ | |/ ___|
@@ -798,7 +783,7 @@ ifneq ($(KLAYOUT_DRC_FILE),)
 	        --deck=$(KLAYOUT_DRC_FILE) \
 	        --in-gds=$< \
 	        --report-file=$(abspath $@), \
-	        $(SCRIPTS_DIR)/klayout.sh -zz -rd in_gds="$<" \
+	        $(or $(KLAYOUT_CMD),$(error KLayout not found. Install KLayout or set KLAYOUT_CMD)) -zz -rd in_gds="$<" \
 	        -rd report_file=$(abspath $@) \
 	        -r $(KLAYOUT_DRC_FILE))
 	# Hacky way of getting DRV count (don't error on no matches)
@@ -827,7 +812,7 @@ ifneq ($(KLAYOUT_LVS_FILE),)
 	        --cdl-file=$(abspath $(OBJECTS_DIR)/6_final_concat.cdl) \
 	        --top-cell=$(DESIGN_NAME) \
 	        --report-file=$(abspath $@), \
-	        $(SCRIPTS_DIR)/klayout.sh -b -rd in_gds="$<" \
+	        $(or $(KLAYOUT_CMD),$(error KLayout not found. Install KLayout or set KLAYOUT_CMD)) -b -rd in_gds="$<" \
 	        -rd cdl_file=$(abspath $(OBJECTS_DIR)/6_final_concat.cdl) \
 	        -rd top_cell="$(DESIGN_NAME)" \
 	        -rd report_file=$(abspath $@) \
@@ -883,7 +868,7 @@ clean_all: clean_synth clean_floorplan clean_place clean_cts clean_route clean_f
 	rm -f $(LOG_DIR)/write_binary_libs*.log
 
 .PHONY: nuke
-nuke: clean_test clean_issues
+nuke: clean_issues
 	rm -rf $(WORK_HOME)/results $(WORK_HOME)/logs $(WORK_HOME)/reports $(WORK_HOME)/objects
 	rm -f $(OBJECTS_DIR)/copyright.txt
 
@@ -891,7 +876,7 @@ nuke: clean_test clean_issues
 #-------------------------------------------------------------------------------
 .PHONY: $(foreach file,$(RESULTS_DEF) $(RESULTS_GDS) $(RESULTS_OAS),klayout_$(file))
 $(foreach file,$(RESULTS_DEF) $(RESULTS_GDS) $(RESULTS_OAS),klayout_$(file)): klayout_%: check-klayout $(OBJECTS_DIR)/klayout.lyt
-	$(SCRIPTS_DIR)/klayout.sh -nn $(OBJECTS_DIR)/klayout.lyt $(RESULTS_DIR)/$*
+	$(KLAYOUT_CMD) -nn $(OBJECTS_DIR)/klayout.lyt $(RESULTS_DIR)/$*
 
 $(eval $(call OPEN_GUI_SHORTCUT,synth,1_synth.odb))
 $(eval $(call OPEN_GUI_SHORTCUT,floorplan,2_floorplan.odb))
@@ -936,19 +921,10 @@ handoff : all_defs all_verilog
 .PHONY: test-unset-and-make-%
 test-unset-and-make-%: ; $(UNSET_AND_MAKE) $*
 
-.phony: klayout
-klayout:
-	$(SCRIPTS_DIR)/klayout.sh
-
-.phony: run
+.PHONY: run
 run:
 	@mkdir -p $(RESULTS_DIR) $(LOG_DIR) $(REPORTS_DIR) $(OBJECTS_DIR)
 	$(RUN_CMD) --log $(abspath $(LOG_DIR)/$(RUN_LOG_NAME_STEM).log) --tee -- $(OPENROAD_CMD) -no_splash $(if $(filter %.py,$(RUN_SCRIPT)),-python) $(RUN_SCRIPT)
-
-export RUN_YOSYS_ARGS ?= -c $(SCRIPTS_DIR)/yosys_keep.tcl
-.phony: run-yosys
-run-yosys:
-	$(YOSYS_EXE) $(RUN_YOSYS_ARGS)
 
 # Utilities
 #-------------------------------------------------------------------------------
