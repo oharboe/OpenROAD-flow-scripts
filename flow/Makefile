@@ -275,7 +275,7 @@ do-auto-memories: $(RESULTS_DIR)/memories_inferred.json
 	  $(foreach file,$(ADDITIONAL_MEMORIES),--memories $(file)) \
 	  $(foreach file,$(AUTO_MEMORIES_REGFILES),--regfile-spec $(file)) \
 	  $(foreach m,$(AUTO_MEMORIES_MACRO_PLACE),--macro-place $(m)) \
-	  $(if $(AUTO_MEMORIES_REGFILES),--openroad $(OPENROAD_EXE)) \
+	  $(if $(AUTO_MEMORIES_REGFILES),--openroad '$(subst ','\'',$(OPENROAD_EXE))') \
 	  $(foreach file,$(TECH_LEF) $(SC_LEF),--lef $(file))
 
 $(RESULTS_DIR)/memories.json: $(RESULTS_DIR)/memories_inferred.json $(ADDITIONAL_MEMORIES) \
@@ -366,8 +366,15 @@ UNSET_VARS = for var in $(UNSET_VARIABLES_NAMES); do unset $$var; done
 # However, on some versions of make, MAKEFILE_LIST can be empty, so
 # don't expand it in that case.
 FILE_MAKEFILE ?= $(if $(firstword $(MAKEFILE_LIST)),--file=$(firstword $(MAKEFILE_LIST)),)
-SUB_MAKE = $(MAKE) $(foreach V,$(COMMAND_LINE_ARGS), $(if $($V),$V=$(shell echo "$($V)" | $(FLOW_HOME)/scripts/escape.sh),$V='')) --no-print-directory $(FILE_MAKEFILE) DESIGN_CONFIG=$(DESIGN_CONFIG)
-UNSET_AND_MAKE = @bash -c '$(UNSET_VARS); $(SUB_MAKE) $$@' --
+
+# UNSET_VARS clears MAKEFLAGS too, so the sub-make gets the command-line
+# variables from SUB_MAKE, as command-line variables again. Each one is a
+# single shell word holding the value this make sees: single-quoted, with
+# ' escaped for the shell and $ for the sub-make. Only the shell running
+# the recipe parses it, so quotes, $ and spaces reach the sub-make intact.
+SUB_MAKE_ARG = '$(subst ','\'',$1=$(subst $$,$$$$,$($1)))'
+SUB_MAKE = $(MAKE) $(foreach V,$(COMMAND_LINE_ARGS),$(call SUB_MAKE_ARG,$V)) --no-print-directory $(FILE_MAKEFILE) DESIGN_CONFIG=$(DESIGN_CONFIG)
+UNSET_AND_MAKE = @bash -c '$(UNSET_VARS); "$$@"' -- $(SUB_MAKE)
 
 $(OBJECTS_DIR)/copyright.txt:
 	@$(OPENROAD_CMD) $(SCRIPTS_DIR)/noop.tcl
@@ -776,7 +783,7 @@ ifneq ($(KLAYOUT_DRC_FILE),)
 	        --deck=$(KLAYOUT_DRC_FILE) \
 	        --in-gds=$< \
 	        --report-file=$(abspath $@), \
-	        $(SCRIPTS_DIR)/klayout.sh -zz -rd in_gds="$<" \
+	        $(or $(KLAYOUT_CMD),$(error KLayout not found. Install KLayout or set KLAYOUT_CMD)) -zz -rd in_gds="$<" \
 	        -rd report_file=$(abspath $@) \
 	        -r $(KLAYOUT_DRC_FILE))
 	# Hacky way of getting DRV count (don't error on no matches)
@@ -805,7 +812,7 @@ ifneq ($(KLAYOUT_LVS_FILE),)
 	        --cdl-file=$(abspath $(OBJECTS_DIR)/6_final_concat.cdl) \
 	        --top-cell=$(DESIGN_NAME) \
 	        --report-file=$(abspath $@), \
-	        $(SCRIPTS_DIR)/klayout.sh -b -rd in_gds="$<" \
+	        $(or $(KLAYOUT_CMD),$(error KLayout not found. Install KLayout or set KLAYOUT_CMD)) -b -rd in_gds="$<" \
 	        -rd cdl_file=$(abspath $(OBJECTS_DIR)/6_final_concat.cdl) \
 	        -rd top_cell="$(DESIGN_NAME)" \
 	        -rd report_file=$(abspath $@) \
@@ -869,7 +876,7 @@ nuke: clean_issues
 #-------------------------------------------------------------------------------
 .PHONY: $(foreach file,$(RESULTS_DEF) $(RESULTS_GDS) $(RESULTS_OAS),klayout_$(file))
 $(foreach file,$(RESULTS_DEF) $(RESULTS_GDS) $(RESULTS_OAS),klayout_$(file)): klayout_%: check-klayout $(OBJECTS_DIR)/klayout.lyt
-	$(SCRIPTS_DIR)/klayout.sh -nn $(OBJECTS_DIR)/klayout.lyt $(RESULTS_DIR)/$*
+	$(KLAYOUT_CMD) -nn $(OBJECTS_DIR)/klayout.lyt $(RESULTS_DIR)/$*
 
 $(eval $(call OPEN_GUI_SHORTCUT,synth,1_synth.odb))
 $(eval $(call OPEN_GUI_SHORTCUT,floorplan,2_floorplan.odb))
@@ -913,10 +920,6 @@ handoff : all_defs all_verilog
 
 .PHONY: test-unset-and-make-%
 test-unset-and-make-%: ; $(UNSET_AND_MAKE) $*
-
-.phony: klayout
-klayout:
-	$(SCRIPTS_DIR)/klayout.sh
 
 .PHONY: run
 run:
