@@ -22,7 +22,11 @@ export WC_VOLTAGE          = 0.63
 # Dont use cells to ease congestion
 # Specify at least one filler cell if none
 export DONT_USE_CELLS          = *x1p*_ASAP7* *xp*_ASAP7*
-export DONT_USE_CELLS          += SDF* ICG*
+export DONT_USE_CELLS          += SDF*
+# INFER_CLKGATES inserts ICG cells, which OpenROAD must then be free to size
+ifneq ($(INFER_CLKGATES),1)
+export DONT_USE_CELLS          += ICG*
+endif
 
 export SYNTH_MINIMUM_KEEP_SIZE       ?= 1000
 
@@ -37,6 +41,8 @@ export PLACE_SITE              ?= asap7sc7p5t
 export MAKE_TRACKS             = $(PLATFORM_DIR)/openRoad/make_tracks.tcl
 
 # Define default PDN config
+export GLOBAL_CONNECT_TCL ?= $(PLATFORM_DIR)/openRoad/pdn/global_connect.tcl
+
 ifeq ($(BLOCKS),)
    export PDN_TCL ?= $(PLATFORM_DIR)/openRoad/pdn/grid_strategy-M1-M2-M5-M6.tcl
 else
@@ -60,8 +66,6 @@ export PLACE_DENSITY ?= 0.60
 # Endcap and Welltie cells
 export TAPCELL_TCL             ?= $(PLATFORM_DIR)/openRoad/tapcell.tcl
 
-export SET_RC_TCL              = $(PLATFORM_DIR)/setRC.tcl
-
 # Route options
 export MIN_ROUTING_LAYER        ?= M2
 export MIN_CLK_ROUTING_LAYER    ?= M4
@@ -76,7 +80,7 @@ export FASTROUTE_TCL ?= $(PLATFORM_DIR)/fastroute.tcl
 export KLAYOUT_TECH_FILE       = $(PLATFORM_DIR)/KLayout/asap7.lyt
 
 # KLayout DRC ruledeck
-export KLAYOUT_DRC_FILE = $(PLATFORM_DIR)/drc/asap7.lydrc
+export KLAYOUT_DRC_FILE ?= $(PLATFORM_DIR)/drc/asap7_drc.py
 
 # OpenRCX extRules
 export RCX_RULES               = $(PLATFORM_DIR)/rcx_patterns.rules
@@ -176,20 +180,20 @@ ifeq ($(CLUSTER_FLOPS),1)
 endif
 
 ### Add additional files to the variables based on the OTHER_VT list
-$(foreach vt_type,$(OTHER_VT),\
-  $(eval OTHER_VT_TAG = $(strip $(patsubst %VT, %, $(vt_type)))) \
-  $(eval ADDITIONAL_LEFS += $(PLATFORM_DIR)/lef/asap7sc7p5t_28_$(OTHER_VT_TAG)_1x_220121a.lef) \
-  $(eval BC_NLDM_DFF_LIB_FILE += $(subst PLACEHOLDER,$(OTHER_VT_TAG),$(BC_NLDM_DFF_LIB_FILE_T))) \
-  $(eval BC_CCS_DFF_LIB_FILE += $(subst PLACEHOLDER,$(OTHER_VT_TAG),$(BC_CCS_DFF_LIB_FILE_T))) \
-  $(eval WC_NLDM_DFF_LIB_FILE += $(subst PLACEHOLDER,$(OTHER_VT_TAG),$(WC_NLDM_DFF_LIB_FILE_T))) \
-  $(eval TC_NLDM_DFF_LIB_FILE += $(subst PLACEHOLDER,$(OTHER_VT_TAG),$(TC_NLDM_DFF_LIB_FILE_T))) \
-  $(eval BC_NLDM_LIB_FILES += $(subst PLACEHOLDER,$(OTHER_VT_TAG),$(BC_NLDM_LIB_FILES_T))) \
-  $(eval BC_CCS_LIB_FILES += $(subst PLACEHOLDER,$(OTHER_VT_TAG),$(BC_CCS_LIB_FILES_T))) \
-  $(eval WC_NLDM_LIB_FILES += $(subst PLACEHOLDER,$(OTHER_VT_TAG),$(WC_NLDM_LIB_FILES_T))) \
-  $(eval TC_NLDM_LIB_FILES += $(subst PLACEHOLDER,$(OTHER_VT_TAG),$(TC_NLDM_LIB_FILES_T))) \
-  $(eval GDS_FILES += $(PLATFORM_DIR)/gds/asap7sc7p5t_28_$(OTHER_VT_TAG)_220121a.gds) \
-  $(eval FILL_CELLS += $(addsuffix $(OTHER_VT_TAG), $(FILL_CELLS_T))) \
-)
+ifneq ($(strip $(OTHER_VT)),)
+OTHER_VT_TAGS := $(patsubst %VT,%,$(OTHER_VT))
+ADDITIONAL_LEFS += $(foreach tag,$(OTHER_VT_TAGS),$(PLATFORM_DIR)/lef/asap7sc7p5t_28_$(tag)_1x_220121a.lef)
+BC_NLDM_DFF_LIB_FILE += $(foreach tag,$(OTHER_VT_TAGS),$(subst PLACEHOLDER,$(tag),$(BC_NLDM_DFF_LIB_FILE_T)))
+BC_CCS_DFF_LIB_FILE += $(foreach tag,$(OTHER_VT_TAGS),$(subst PLACEHOLDER,$(tag),$(BC_CCS_DFF_LIB_FILE_T)))
+WC_NLDM_DFF_LIB_FILE += $(foreach tag,$(OTHER_VT_TAGS),$(subst PLACEHOLDER,$(tag),$(WC_NLDM_DFF_LIB_FILE_T)))
+TC_NLDM_DFF_LIB_FILE += $(foreach tag,$(OTHER_VT_TAGS),$(subst PLACEHOLDER,$(tag),$(TC_NLDM_DFF_LIB_FILE_T)))
+BC_NLDM_LIB_FILES += $(foreach tag,$(OTHER_VT_TAGS),$(subst PLACEHOLDER,$(tag),$(BC_NLDM_LIB_FILES_T)))
+BC_CCS_LIB_FILES += $(foreach tag,$(OTHER_VT_TAGS),$(subst PLACEHOLDER,$(tag),$(BC_CCS_LIB_FILES_T)))
+WC_NLDM_LIB_FILES += $(foreach tag,$(OTHER_VT_TAGS),$(subst PLACEHOLDER,$(tag),$(WC_NLDM_LIB_FILES_T)))
+TC_NLDM_LIB_FILES += $(foreach tag,$(OTHER_VT_TAGS),$(subst PLACEHOLDER,$(tag),$(TC_NLDM_LIB_FILES_T)))
+GDS_FILES += $(foreach tag,$(OTHER_VT_TAGS),$(PLATFORM_DIR)/gds/asap7sc7p5t_28_$(tag)_220121a.gds)
+FILL_CELLS += $(foreach tag,$(OTHER_VT_TAGS),$(addsuffix $(tag),$(FILL_CELLS_T)))
+endif
 
 # Dont use SC library based on CORNER selection
 #
