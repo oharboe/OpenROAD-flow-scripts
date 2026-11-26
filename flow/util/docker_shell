@@ -9,7 +9,8 @@ set -ex
 #   -i, --image IMAGE Docker image (overrides $OR_IMAGE and default)
 #   --user            Map host UID/GID into the container via entrypoint.sh
 #   -p, --port SPEC   Forward a port, e.g. --port 8265:8265 (repeatable)
-#   --dry-run         Print the docker command without executing it
+#   --pids-limit N    Container PID limit: -1 = unlimited (default: -1)
+#   --dry-run         Print the commands (xauth setup + docker run) without executing them
 #   -h|--help         Show this help and exit
 
 #
@@ -31,6 +32,7 @@ get_container_engine () {
 }
 
 DEFAULT_IMAGE="openroad/orfs:latest"
+PIDS_LIMIT=-1
 FLOW_DIR="/OpenROAD-flow-scripts/flow"
 USE_USER=false
 DRY_RUN=false
@@ -39,25 +41,31 @@ IMAGE=""
 CMD_ARGS=()
 
 usage() {
-    grep '^#' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,/^$/s/^# \{0,1\}//p' "$0"
     exit 0
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -i|--image)  IMAGE="$2"; shift 2 ;;
-        --user)      USE_USER=true; shift ;;
-        -p|--port)   PORTS+=("$2"); shift 2 ;;
-        --dry-run)   DRY_RUN=true; shift ;;
-        -h|--help)   usage ;;
-        --)          shift; CMD_ARGS=("$@"); break ;;
-        -*)          echo "Unknown option: $1" >&2; exit 1 ;;
-        *)           CMD_ARGS=("$@"); break ;;
+        -i|--image)   IMAGE="$2"; shift 2 ;;
+        --user)       USE_USER=true; shift ;;
+        -p|--port)    PORTS+=("$2"); shift 2 ;;
+        --pids-limit) PIDS_LIMIT="$2"; shift 2 ;;
+        --dry-run)    DRY_RUN=true; shift ;;
+        -h|--help)    usage ;;
+        --)           shift; CMD_ARGS=("$@"); break ;;
+        -*)           echo "Unknown option: $1" >&2; exit 1 ;;
+        *)            CMD_ARGS=("$@"); break ;;
     esac
 done
 
 # Image resolution: --image > $OR_IMAGE > default
 IMAGE="${IMAGE:-${OR_IMAGE:-$DEFAULT_IMAGE}}"
+
+if ! [[ "$PIDS_LIMIT" =~ ^-?[0-9]+$ ]] || [ "$PIDS_LIMIT" -lt -1 ] || [ "$PIDS_LIMIT" -eq 0 ]; then
+    echo "Invalid PID limit: $PIDS_LIMIT (expected -1 for unlimited, or a positive integer)" >&2
+    exit 1
+fi
 
 get_container_engine
 
@@ -72,9 +80,14 @@ if [[ -n "${KLAYOUT_CMD:-}" ]]; then
 fi
 
 XSOCK=/tmp/.X11-unix
-XAUTH=/tmp/.docker.xauth
-if ! $DRY_RUN; then
-    xauth nlist ${DISPLAY:-:0} | sed -e 's/^..../ffff/' | xauth -f $XAUTH nmerge -
+
+if $DRY_RUN; then
+    # Use a fixed path so the printed commands work when run by hand
+    XAUTH=/tmp/.docker.xauth.dry-run
+else
+    XAUTH=$(mktemp /tmp/.docker.xauth.XXXXXXXXXX)
+    trap 'rm -f "$XAUTH"' EXIT
+    xauth nlist "${DISPLAY:-:0}" | sed -e 's/^..../ffff/' | xauth -f "$XAUTH" nmerge -
 fi
 
 if test -t 0; then
@@ -104,10 +117,11 @@ CMD_STR=
 
 ENV_SH_CMD='if [ -f ../env.sh ]; then . ../env.sh; fi;'
 
-# Build the command once; dry-run prints it, otherwise exec it.
+# Build the command once; dry-run prints it, otherwise run it.
 DOCKER_CMD=(
     "$container_engine" run --rm -i
     $DOCKER_INTERACTIVE
+    --pids-limit "$PIDS_LIMIT"
     $user_env $user_args
     -e LIBGL_ALWAYS_SOFTWARE=1
     -e QT_X11_NO_MITSHM=1
@@ -130,8 +144,11 @@ DOCKER_CMD=(
 )
 
 if $DRY_RUN; then
-    echo "${DOCKER_CMD[*]}"
+    echo "# Run both lines; the first creates $XAUTH for X forwarding"
+    echo "xauth nlist '${DISPLAY:-:0}' | sed -e 's/^..../ffff/' | xauth -f '$XAUTH' nmerge -"
+    printf '%q ' "${DOCKER_CMD[@]}"
+    echo
     exit 0
 fi
 
-exec "${DOCKER_CMD[@]}"
+"${DOCKER_CMD[@]}"
