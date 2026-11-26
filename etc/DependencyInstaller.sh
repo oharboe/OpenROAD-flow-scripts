@@ -12,8 +12,6 @@ fi
 # Make sure we are on the correct folder before beginning
 cd "${_script_dir}/../"
 
-# package versions
-klayoutVersion=0.30.12
 if [[ "$OSTYPE" == "darwin"* ]]; then
     numThreads=$(sysctl -n hw.logicalcpu)
 else
@@ -115,6 +113,18 @@ _installORDependencies() {
     ./tools/OpenROAD/etc/DependencyInstaller.sh ${OR_INSTALLER_ARGS} -yosys-ver="${YOSYS_VER}"
 }
 
+# Succeeds only if the Python interpreter $1 is 3.12 or newer. The lock files
+# are compiled with Python 3.12, and older versions cannot install some of
+# their pins.
+_checkPython() {
+    "$1" -c '
+import sys
+if sys.version_info < (3, 12):
+    sys.exit("ERROR: etc/requirements-common_lock.txt needs Python 3.12"
+             " or newer; %s is %s." % (sys.executable, sys.version.split()[0]))
+'
+}
+
 _installPipCommon() {
     local lockfile piplock
     lockfile="${_script_dir}/requirements-common_lock.txt"
@@ -122,8 +132,12 @@ _installPipCommon() {
     if [[ -n "${VIRTUAL_ENV:-}" ]]; then
         # The lock goes into the virtual environment, created if it does
         # not exist yet; the Docker images name one with ENV VIRTUAL_ENV.
-        if [[ ! -x "${VIRTUAL_ENV}/bin/python3" ]]; then
+        if [[ ! -e "${VIRTUAL_ENV}/bin/python3" && ! -L "${VIRTUAL_ENV}/bin/python3" ]]; then
+            _checkPython python3 || exit 1
             python3 -m venv "${VIRTUAL_ENV}"
+        elif [[ ! -x "${VIRTUAL_ENV}/bin/python3" ]] || ! _checkPython "${VIRTUAL_ENV}/bin/python3"; then
+            echo "Move ${VIRTUAL_ENV} aside and recreate it with Python 3.12 or newer." >&2
+            exit 1
         fi
         "${VIRTUAL_ENV}/bin/python3" -m pip install --no-cache-dir --upgrade --require-hashes -r "$piplock"
         "${VIRTUAL_ENV}/bin/python3" -m pip install --no-cache-dir -r "$lockfile"
@@ -135,6 +149,7 @@ _installPipCommon() {
         echo "Error: Activate a virtual environment on macOS."
         exit 1
     else
+        _checkPython python3 || exit 1
         # pip before 23.3 fails --require-hashes on requirements-common_lock.txt:
         # it does not match an extras-bearing pin such as
         # googleapis-common-protos[grpc]==X against a plain request for the same
@@ -160,7 +175,7 @@ _install_EL8_EL9_CleanUp() {
 
 # Enterprise Linux 8/9 package installation (EL8/EL9 = RHEL, Rocky Linux, or AlmaLinux)
 _install_EL8_EL9_Packages() {
-    # Re-detect EL version for appropriate KLayout package
+    # Re-detect EL version
     if [[ -f /etc/os-release ]]; then
         elVersion=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | sed 's/"//g' | cut -d. -f1)
     else
@@ -196,7 +211,7 @@ _install_EL8_EL9_Packages() {
         wget \
         zlib-devel
 
-    # The pip lock files need Python 3.10 or newer, which
+    # The pip lock files need Python 3.12 or newer, which
     # is newer than the EL8 and EL9 defaults.
     dnf -y install python3.12 python3.12-devel python3.12-pip
     update-alternatives --install /usr/bin/python3 python3 "$(command -v python3.12)" 50
@@ -216,60 +231,11 @@ _install_EL8_EL9_Packages() {
         dnf -y install \
             https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/readline-devel-8.1-4.el9.x86_64.rpm
     fi
-
-    # Install KLayout based on EL version, note the different URLs
-    case "${elVersion}" in
-        "8")
-            if ! [ -x "$(command -v klayout)" ]; then
-                dnf -y install https://www.klayout.org/downloads/CentOS_8/klayout-${klayoutVersion}-0.x86_64.rpm
-            else
-                currentVersion=$(klayout -v | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
-                if _versionCompare "$currentVersion" -ge $klayoutVersion; then
-                    echo "KLayout version greater than or equal to ${klayoutVersion}"
-                else
-                    echo "KLayout version less than ${klayoutVersion}"
-                    sudo dnf remove -y klayout
-                    dnf -y install https://www.klayout.org/downloads/CentOS_8/klayout-${klayoutVersion}-0.x86_64.rpm
-                fi
-            fi
-            ;;
-        "9")
-            if ! [ -x "$(command -v klayout)" ]; then
-                dnf -y install https://www.klayout.org/downloads/RockyLinux_9/klayout-${klayoutVersion}-0.x86_64.rpm
-            else
-                currentVersion=$(klayout -v | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
-                if _versionCompare "$currentVersion" -ge $klayoutVersion; then
-                    echo "KLayout version greater than or equal to ${klayoutVersion}"
-                else
-                    echo "KLayout version less than ${klayoutVersion}"
-                    sudo dnf remove -y klayout
-                    dnf -y install https://www.klayout.org/downloads/RockyLinux_9/klayout-${klayoutVersion}-0.x86_64.rpm
-                fi
-            fi
-            ;;
-        *)
-            echo "ERROR: Unsupported Enterprise Linux version: ${elVersion}"
-            exit 1
-            ;;
-    esac
 }
 
 _installUbuntuCleanUp() {
     apt-get autoclean -y
     apt-get autoremove -y
-}
-
-_installKlayoutDependenciesUbuntuAarch64() {
-    echo "Installing Klayout dependencies"
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get -y update
-    apt-get -y install  build-essential \
-                        qtbase5-dev qttools5-dev libqt5xmlpatterns5-dev qtmultimedia5-dev libqt5multimediawidgets5 libqt5svg5-dev \
-                        ruby ruby-dev \
-                        python3 python3-dev \
-                        libz-dev\
-                        libgit2-dev
-    echo "All dependencies installed successfully"
 }
 
 _installUbuntuPackages() {
@@ -326,44 +292,8 @@ _installUbuntuPackages() {
     fi
     apt-get install -y --no-install-recommends ${packages[@]}
 
-    # install KLayout
-    if  [[ $1 == "rodete" ]]; then
-        apt-get -y install --no-install-recommends klayout python3-pandas
-    else
-        arch=$(uname -m)
-        lastDir="$(pwd)"
-        # temp dir to download and compile
-        baseDir=/tmp/installers
-        klayoutPrefix=${PREFIX:-"/usr/local"}
-        mkdir -p "${baseDir}"
-        cd "${baseDir}"
-        if [[ $arch == "aarch64" ]]; then
-            if [ ! -f ${klayoutPrefix}/klayout ]; then
-                _installKlayoutDependenciesUbuntuAarch64
-                echo "Installing KLayout for aarch64 architecture"
-                git clone --depth=1 -b "v${klayoutVersion}" https://github.com/KLayout/klayout.git
-                cd klayout
-                ./build.sh -bin "${klayoutPrefix}" -option -j "${numThreads}"
-            else
-                echo "Klayout is already installed"
-        fi
-        else
-            if [[ $1 == 22.04 ]]; then
-                klayoutChecksum=6dfffa50f385881768dee30bdc759608
-            elif [[ $1 == 24.04 ]]; then
-                klayoutChecksum=0181713e60891e461d6d1664c1b8e213
-            elif [[ $1 == 26.04 ]]; then
-                klayoutChecksum=904f60fd05c3a5029cab8a2840029f49
-            else
-                echo "Unsupported Ubuntu version $1. KLayout ${klayoutVersion} packages are pinned for 22.04, 24.04, and 26.04. Please upgrade to a supported LTS release or install KLayout ${klayoutVersion} manually from https://www.klayout.org/build.html"
-                exit 1
-            fi
-            wget https://www.klayout.org/downloads/Ubuntu-${1%.*}/klayout_${klayoutVersion}-1_amd64.deb
-            md5sum -c <(echo "${klayoutChecksum} klayout_${klayoutVersion}-1_amd64.deb") || exit 1
-            dpkg -i klayout_${klayoutVersion}-1_amd64.deb
-        fi
-        cd "${lastDir}"
-        rm -rf "${baseDir}"
+    if [[ $1 == "rodete" ]]; then
+        apt-get -y install --no-install-recommends python3-pandas
     fi
 
     if command -v docker &> /dev/null; then
@@ -400,7 +330,6 @@ _installDarwinPackages() {
     brew install libffi tcl-tk ruby
     brew install python libomp doxygen bison flex boost spdlog zlib cmake
     brew link --force libomp
-    brew install --cask klayout
     brew install docker docker-buildx
 }
 
@@ -414,7 +343,6 @@ _installCI() {
         gnupg \
         jq \
         lsb-release \
-        parallel \
         python3 \
         software-properties-common \
         zip
@@ -640,31 +568,26 @@ case "${os}" in
         if [[ "${option}" == "common" || "${option}" == "all" ]]; then
             _installCmake
         fi
-        if [[ $version != "rodete" ]]; then
-            if _versionCompare ${version} -lt 23.04 ; then
-                if [[ "${option}" == "common" || "${option}" == "all" ]]; then
-                    _installPipCommon
-                fi
-            else
-                # The system Python is externally managed (PEP 668): its
-                # packages come from apt, in -base with the other system
-                # packages. The lock, which also has packages apt does not
-                # carry, goes into a virtual environment when one is named.
-                if [[ "${option}" == "base" || "${option}" == "all" ]]; then
-                    _installPipSystem
-                fi
-                if [[ "${option}" == "common" || "${option}" == "all" ]]; then
-                    if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-                        _installPipCommon
-                    else
-                        echo "Python packages from apt only. For those in" \
-                            "etc/requirements-common_lock.txt that apt does" \
-                            "not carry, set VIRTUAL_ENV and run -common again."
-                    fi
-                fi
+        # From Ubuntu 23.04 the system Python is externally managed
+        # (PEP 668): its packages come from apt, in -base with the other
+        # system packages.
+        if [[ $version != "rodete" ]] && _versionCompare ${version} -ge 23.04 \
+            && [[ "${option}" == "base" || "${option}" == "all" ]]; then
+            _installPipSystem
+        fi
+        # The lock, which also has packages apt does not carry, among them
+        # the klayout module the flow writes GDS with, goes into the
+        # virtual environment VIRTUAL_ENV names; setup.sh names the
+        # checkout's .venv. The lock needs Python 3.12, so on Ubuntu 22.04
+        # (Python 3.10) the virtual environment needs a newer Python.
+        if [[ "${option}" == "common" || "${option}" == "all" ]]; then
+            if [[ -z "${VIRTUAL_ENV:-}" ]]; then
+                echo "ERROR: set VIRTUAL_ENV to the virtual environment to" \
+                    "install etc/requirements-common_lock.txt into," \
+                    "or run setup.sh, which installs it into .venv." >&2
+                exit 1
             fi
-        else
-            echo "Skip pip packages for rodete"
+            _installPipCommon
         fi
         ;;
     "Darwin" )

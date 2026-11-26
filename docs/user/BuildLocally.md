@@ -12,6 +12,13 @@ cd OpenROAD-flow-scripts
 sudo ./setup.sh
 ```
 
+`setup.sh` installs the Python packages the flow uses, the `klayout`
+module that writes GDS among them, into a virtual environment in `.venv`,
+which `env.sh` puts first on `PATH`.
+These packages need Python 3.12 or newer.
+If an existing `.venv` uses an older Python version, move it aside.
+Make sure `python3` is Python 3.12 or newer, then run `sudo ./setup.sh` again to create a new `.venv`.
+
 ## Build
 
 ``` shell
@@ -32,7 +39,7 @@ up the environment. The `make` command runs from RTL-GDSII generation for defaul
 ``` shell
 source ./env.sh
 yosys -help
-yosys -m slang -p "slang_version"
+yosys -p "slang_version"
 openroad -help
 cd flow
 make

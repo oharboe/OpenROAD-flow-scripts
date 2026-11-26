@@ -5,7 +5,7 @@
 # NOTE: don't use this file directly unless you know what you are doing,
 # instead use etc/DockerHelper.sh
 
-ARG fromImage=openroad/flow-ubuntu22.04-dev:latest
+ARG fromImage=openroad/flow-ubuntu26.04-dev:latest
 # Image holding the prebuilt tools/install of every tool except OpenROAD
 # (a build of the orfs-tools target). By default they are built here.
 ARG toolsImage=orfs-tools
@@ -87,10 +87,10 @@ if [ ! -x tools/install/OpenROAD/bin/openroad ]; then
 fi
 EOF
 
-# tools/OpenROAD/src/sta is excluded because it is covered by a separate
+# tools/OpenROAD/openroad/sta is excluded because it is covered by a separate
 # commercial license agreement.
 RUN find /OpenROAD-flow-scripts/tools/OpenROAD \( -name "*LICENSE*" -o -name "*LICENSES*" \) \
-    | grep -v '/OpenROAD/src/sta/' \
+    | grep -v '/OpenROAD/openroad/sta/' \
     | while IFS= read -r f; do \
         rel="${f#/OpenROAD-flow-scripts/tools/}"; \
         mkdir -p "/OpenROAD-flow-scripts/tools/install/licenses/$(dirname "$rel")"; \
