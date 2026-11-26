@@ -134,7 +134,7 @@ endef
 .PHONY: $(foreach script,$(ISSUE_SCRIPTS),$(script)_issue)
 
 $(foreach script,$(ISSUE_SCRIPTS),$(script)_issue): %_issue :
-	$(UTILS_DIR)/makeIssue.sh $(WORK_HOME)/$*
+	$(PYTHON_EXE) $(UTILS_DIR)/makeIssue.py $(WORK_HOME)/$*
 
 .PHONY: clean_issues
 clean_issues:
@@ -168,16 +168,6 @@ view_cells_web:
 .PHONY: command
 command:
 	$(OPENROAD_NO_EXIT_CMD)
-
-## Provide easy access to debugging
-ifdef GDB
-export OPENROAD_EXE := gdb --args $(OPENROAD_EXE)
-endif
-
-## Provide easy way to run valgrind
-ifdef VALGRIND
-export OPENROAD_EXE := valgrind $(VALGRIND_ARGS) $(OPENROAD_EXE)
-endif
 
 ## Convert RVE DRC database to JSON
 .PHONY: convert_rve
