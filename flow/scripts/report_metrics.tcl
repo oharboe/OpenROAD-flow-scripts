@@ -30,8 +30,12 @@ proc get_power_file_scope_args { } {
   return $args
 }
 
-proc report_metrics { stage when { include_erc true } { include_clock_skew true } } {
-  if { $::env(SKIP_REPORT_METRICS) } {
+# The call is named after the report, as in cts.cts_final for
+# report_metrics 4 "cts final"; run is the flow's choice to report here.
+proc report_metrics { stage when { include_erc true } { include_clock_skew true } { run 1 } } {
+  set call [lindex {- synth floorplan place cts grt final} $stage]
+  append call . [regsub -all {[^a-z0-9]+} [string tolower $when] _]
+  if { ![command_runs report_metrics $call [expr { $run && !$::env(SKIP_REPORT_METRICS) }]] } {
     return
   }
   puts "Report metrics stage $stage, $when..."
@@ -270,7 +274,7 @@ proc report_metrics { stage when { include_erc true } { include_clock_skew true 
   if { [env_var_exists_and_non_empty CORNERS] } {
     foreach corner $::env(CORNERS) {
       report_puts "Corner: $corner"
-      report_power -corner $corner >> $filename
+      report_power -scene $corner >> $filename
       report_power_metric -corner $corner
     }
     unset corner
