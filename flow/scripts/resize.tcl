@@ -1,7 +1,7 @@
 utl::set_metrics_stage "placeopt__{}"
 source $::env(SCRIPTS_DIR)/load.tcl
 erase_non_stage_variables place
-load_design 3_3_place_gp.odb 2_floorplan.sdc
+load_design 3_3_place_gp.odb
 source_step_tcl PRE RESIZE
 
 log_cmd estimate_parasitics
@@ -23,14 +23,14 @@ if { [env_var_equals SWAP_ARITH_OPERATORS 1] } {
   log_cmd global_placement -incremental -density $density
 }
 
-repair_design_helper
+repair_design_helper place.main
 
-if { $::env(ENABLE_PLACE_REPAIR_TIMING) } {
+if { [command_runs repair_timing place.main $::env(ENABLE_PLACE_REPAIR_TIMING)] } {
   # Repair timing using placement parasitics.
   puts "Repair setup and hold violations..."
   log_cmd estimate_parasitics
 
-  repair_timing_helper
+  repair_timing_helper place.main
 }
 
 # post report

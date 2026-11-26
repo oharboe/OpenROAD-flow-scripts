@@ -8,8 +8,9 @@ a small set of example designs through our complete RTL-to-GDS flow.
 To keep track of the quality of the results, every CI run uploads its metrics
 to the [QoR dashboard](https://dashboard.precisioninno.com). The dashboard
 stores one rule per tracked metric and design (a comparison direction and a
-tolerance), and judges a run against a real baseline build: the latest
-`master` build by default. That check is the QoR gate in `make metadata`.
+tolerance), and judges a run against a real baseline build: the `master`
+build at the run's merge base by default. That check is the QoR gate in
+`make metadata`.
 
 The values a run is measured against are collected by
 `flow/util/genMetrics.py` into `$(REPORTS_DIR)/metadata.json`
@@ -40,19 +41,66 @@ baseline value, the current value, the limit, and the delta, and ends with a
 `QoR check: PASS`, `FAIL`, `INCONCLUSIVE`, or `ERROR` line.
 
 A `FAIL` verdict fails the target. So does `ERROR`, which means
-`metadata.json` was missing, malformed, or held no numeric metric. An
+`metadata.json` was missing, malformed, or held no numeric metric, or that a
+`DASHBOARD_MERGE_BASE` ref gave no merge base (see below). An
 `INCONCLUSIVE` verdict does not fail the target: the dashboard had no
 baseline for the design, evaluated nothing, or could not be reached, so the
 check did not run. Read the `[WARN]` lines to see which. Pass `--strict` to
 `checkQorMetrics.py` to get distinct exit codes instead (2 inconclusive,
 3 unreachable).
 
-Two environment variables shape the comparison:
+The check runs as the commit `metadata.json` records. The dashboard searches
+its default baseline pipelines in order and takes a `master` build that has the
+design: the one at the commit's merge base with `master`. A commit on `master`
+is its own merge base, so a run of a `master` commit, such as a downloaded CI
+artifact, is compared against that commit's own build.
 
-- `DASHBOARD_API_KEY` grants access to private platforms. Without it, a
-  private design reports as inconclusive, not as an authentication error.
-- `DASHBOARD_JOB_NAME` names the Jenkins pipeline whose `master` builds are the
-  baseline. The default is `OpenROAD-flow-scripts-Public`.
+The dashboard finds the merge base through GitHub.
+When the commit is in your checkout and no local remote-tracking ref contains it, the check computes the merge base locally and pins the baseline to that build.
+By default, it uses `refs/remotes/upstream/master` if that ref names a commit, else `refs/remotes/origin/master`.
+The report warns with the merge base and its ref because an outdated ref can move the baseline.
+If a local remote-tracking ref contains the commit, the dashboard selects the baseline.
+The dashboard also selects the baseline if the checkout lacks the commit or the run has no commit.
+If Git cannot check remote containment, the checker warns and sends the run unpinned.
+
+If the default ref has no merge base with the commit, the checker warns and sends the run unpinned.
+If a run needs a local pin and the ref you set with `DASHBOARD_MERGE_BASE` or `--merge-base` does not exist or shares no history with the commit, the checker reports `ERROR` and skips that run's request.
+In a sweep, the other runs are still checked and the final verdict is `ERROR`.
+
+When the pinned merge base has no build of the design, the check is sent again
+without the pin. When the dashboard has no `master` build at the merge base, or
+no merge base, it compares against the latest `master` build instead (the
+latest one before the commit, if it knows the commit's date). That build may
+be newer than the commit's base, so changes merged since then can show up as
+regressions or hide real ones, and the result moves with `master`. The report
+warns whenever this happens; set `DASHBOARD_BASE_COMMIT` to compare against an
+exact build instead.
+
+These environment variables shape the comparison:
+
+- `DASHBOARD_API_KEY` grants access to private platforms. With it, a private
+  design is resolved like a public one: the dashboard's default baseline
+  pipelines include the private ones, and only a caller with a key can see
+  their builds. Without it, a private design has no baseline and reports as
+  inconclusive, not as an authentication error.
+- `DASHBOARD_JOB_NAME` checks the run as a build of that CI pipeline instead,
+  with the pipeline's rules for the branch checked out in this repository: the
+  previous build on a trunk branch such as `master`, the merge base on any
+  other branch. It is meant for CI jobs, which also set `DASHBOARD_BRANCH` and
+  `DASHBOARD_COMMIT` (or pass `--branch` and `--commit`) since their checkout
+  has no branch. Earlier versions of the check used it to pick the pipeline
+  that holds a private platform's baseline; that is no longer needed, so leave
+  it unset for a local run, private or not. With it set, an unpushed commit is
+  not pinned to its local merge base.
+- `DASHBOARD_MERGE_BASE` (`--merge-base`) names the ref used to compute the merge base of a local commit that no remote-tracking ref contains.
+  The default is `refs/remotes/upstream/master` when that ref names a commit, else `refs/remotes/origin/master`.
+  Set it if your project remote has another name, or set it to `none` to leave unpushed commits to the dashboard.
+  `DASHBOARD_BASE_COMMIT` or `DASHBOARD_JOB_NAME` disables local pinning.
+- `DASHBOARD_BASE_COMMIT` (`--base-commit`) pins the baseline to the build of
+  that commit. Nothing else is tried: if that commit has no build of the
+  design, the check is inconclusive.
+- `DASHBOARD_API_URL` (`--api-url`) points the check at another deployment and
+  takes precedence over `--beta`.
 
 If you only changed synthesis, you can gate a synthesis-only run, without
 running the rest of the flow. Only the `synth__` and `constraints__` metrics
@@ -62,8 +110,7 @@ are sent, so only their rules are evaluated:
 make metadata-synth
 ```
 
-To check every run under `reports/` at once, or to pin the baseline to a
-specific commit, call the script directly:
+To check every run under `reports/` at once, call the script directly:
 
 ``` shell
 cd OpenROAD-flow-scripts/flow
@@ -84,11 +131,10 @@ Before the dashboard check, each design directory held a
 `rules-<variant>.json` file with absolute limits, and
 `flow/util/checkMetadata.py` compared `metadata.json` against it. Those
 files, that script, `flow/util/genRuleFile.py`, and the `RULES_JSON`
-variable were removed. The make targets `update_ok`, `update_rules`, and
-`update_rules_force` still exist as stubs that print a deprecation warning
-and do nothing, so an old wrapper script does not break. Rule tolerances
-live in the dashboard, so there is nothing to regenerate locally after an
-accepted QoR change.
+variable were removed, and so were the make targets `update_ok`,
+`update_rules`, and `update_rules_force`. Rule tolerances live in the
+dashboard, so there is nothing to regenerate locally after an accepted QoR
+change.
 
 ## Removed: golden metadata (`metadata-<variant>-ok.json`)
 

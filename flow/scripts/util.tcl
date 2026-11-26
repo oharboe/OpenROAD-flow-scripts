@@ -27,40 +27,63 @@ proc log_cmd { cmd args } {
   return $result
 }
 
-proc repair_timing_helper { args } {
-  set additional_args {}
-  append_env_var additional_args SETUP_SLACK_MARGIN -setup_margin 1
-  append_env_var additional_args HOLD_SLACK_MARGIN -hold_margin 1
-  append_env_var additional_args SETUP_MOVE_SEQUENCE -sequence 1
-  append_env_var additional_args SETUP_REPAIR_PHASES -phases 1
-  append_env_var additional_args TNS_END_PERCENT -repair_tns 1
-  append_env_var additional_args SKIP_PIN_SWAP -skip_pin_swap 0
-  append_env_var additional_args SKIP_GATE_CLONING -skip_gate_cloning 0
-  append_env_var additional_args SKIP_BUFFER_REMOVAL -skip_buffer_removal 0
-  append_env_var additional_args SKIP_LAST_GASP -skip_last_gasp 0
-  append_env_var additional_args SKIP_VT_SWAP -skip_vt_swap 0
-  append_env_var additional_args SKIP_CRIT_VT_SWAP -skip_crit_vt_swap 0
-  append_env_var additional_args MATCH_CELL_FOOTPRINT -match_cell_footprint 0
-  lappend additional_args {*}$args -verbose
+# Arguments to one call of a command: the flow's, edited by PLATFORM_ARGS and
+# the command's <COMMAND>_ARGS (docs/user/CommandArguments.md). args.py
+# merges them, so the merge has unit tests (flow/test/test_args.py). call is
+# stage.name, as a user scopes an edit to it. flow is the command line the
+# flow passes, deprecated variables included; deprecated is the part of it
+# deprecated variables add.
+proc command_args { cmd call flow { deprecated {} } { legacy {} } } {
+  set out [exec $::env(PYTHON_EXE) $::env(SCRIPTS_DIR)/args.py resolve \
+    $cmd $call 1 [llength $flow] {*}$flow [llength $deprecated] {*}$deprecated \
+    {*}$legacy 2>@ stderr]
+  return [lrange [split $out \n] 1 end]
+}
 
-  log_cmd repair_timing {*}$additional_args
+# Whether a call runs: run is the flow's choice, and 1 or 0 in
+# PLATFORM_ARGS or <COMMAND>_ARGS changes it.
+proc command_runs { cmd call run } {
+  return [exec $::env(PYTHON_EXE) $::env(SCRIPTS_DIR)/args.py runs $cmd $call $run 2>@ stderr]
+}
+
+proc repair_timing_helper { call args } {
+  set deprecated {}
+  append_env_var deprecated SETUP_SLACK_MARGIN -setup_margin 1
+  append_env_var deprecated HOLD_SLACK_MARGIN -hold_margin 1
+  append_env_var deprecated SETUP_MOVE_SEQUENCE -sequence 1
+  append_env_var deprecated SETUP_REPAIR_PHASES -phases 1
+  append_env_var deprecated TNS_END_PERCENT -repair_tns 1
+  append_env_var deprecated SKIP_PIN_SWAP -skip_pin_swap 0
+  append_env_var deprecated SKIP_GATE_CLONING -skip_gate_cloning 0
+  append_env_var deprecated SKIP_BUFFER_REMOVAL -skip_buffer_removal 0
+  append_env_var deprecated SKIP_LAST_GASP -skip_last_gasp 0
+  append_env_var deprecated SKIP_VT_SWAP -skip_vt_swap 0
+  append_env_var deprecated SKIP_CRIT_VT_SWAP -skip_crit_vt_swap 0
+  set flow $deprecated
+  append_env_var flow MATCH_CELL_FOOTPRINT -match_cell_footprint 0
+  lappend flow {*}$args -verbose
+
+  log_cmd repair_timing {*}[command_args repair_timing $call $flow $deprecated]
 }
 
 # Every detailed_placement in the flow goes through here, so the design's
-# DETAIL_PLACEMENT_ARGS (the legalizer and its window, say) apply to the
+# DETAILED_PLACEMENT_ARGS (the legalizer and its window, say) apply to the
 # placement stage and to every re-legalization after it alike.
-proc detailed_placement_helper { args } {
-  log_cmd detailed_placement {*}[env_var_or_empty DETAIL_PLACEMENT_ARGS] {*}$args
+proc detailed_placement_helper { call args } {
+  set deprecated [env_var_or_empty DETAIL_PLACEMENT_ARGS]
+  log_cmd detailed_placement \
+    {*}[command_args detailed_placement $call [concat $deprecated $args] $deprecated]
 }
 
-proc repair_design_helper { } {
+proc repair_design_helper { call } {
   puts "Perform buffer insertion and gate resizing..."
 
-  set additional_args "-verbose"
-  append_env_var additional_args CAP_MARGIN -cap_margin 1
-  append_env_var additional_args SLEW_MARGIN -slew_margin 1
-  append_env_var additional_args MATCH_CELL_FOOTPRINT -match_cell_footprint 0
-  log_cmd repair_design {*}$additional_args
+  set deprecated {}
+  append_env_var deprecated CAP_MARGIN -cap_margin 1
+  append_env_var deprecated SLEW_MARGIN -slew_margin 1
+  set flow [list -verbose {*}$deprecated]
+  append_env_var flow MATCH_CELL_FOOTPRINT -match_cell_footprint 0
+  log_cmd repair_design {*}[command_args repair_design $call $flow $deprecated]
 }
 
 proc recover_power_helper { } {
@@ -75,7 +98,7 @@ proc recover_power_helper { } {
   set additional_args "-verbose"
   append_env_var additional_args RECOVER_POWER -recover_power 1
   append_env_var additional_args MATCH_CELL_FOOTPRINT -match_cell_footprint 0
-  log_cmd repair_timing {*}$additional_args
+  log_cmd repair_timing {*}[command_args repair_timing grt.recover_power $additional_args]
   report_tns
   report_wns
   report_power
@@ -97,31 +120,11 @@ proc extract_stage { input_file } {
   }
 }
 
-proc find_sdc_file { input_file } {
-  # canonicalize input file, sometimes it is called with an input
-  # file relative to $::env(RESULTS_DIR), other times with
-  # an absolute path
-  if { ![file exists $input_file] } {
-    set input_file [file join $::env(RESULTS_DIR) $input_file]
-  }
-  set input_file [file normalize $input_file]
-
-  set stage [extract_stage $input_file]
-  set design_stage [lindex $stage 0]
-  set sdc_file ""
-
-  set exact_sdc [string map {.odb .sdc} $input_file]
-  set sdc_files \
-    [glob -nocomplain -directory $::env(RESULTS_DIR) -types f "\[1-9+\]_\[1-9_A-Za-z\]*\.sdc"]
-  set sdc_files [lsort -decreasing -dictionary $sdc_files]
-  set sdc_files [lmap file $sdc_files { file normalize $file }]
-  foreach name $sdc_files {
-    if { [lindex [lsort -decreasing -dictionary [list $name $exact_sdc]] 0] == $exact_sdc } {
-      set sdc_file $name
-      break
-    }
-  }
-  return [list $design_stage $sdc_file]
+# The stem ends at the first dot of the file name, so 4_cts.odb,
+# 4_cts.odb.def and 4_cts.odb.v all have 4_cts.sdc
+proc sdc_file_of { design_file } {
+  regsub {\.[^/]*$} $design_file .sdc sdc_file
+  return $sdc_file
 }
 
 proc env_var_equals { env_var value } {
@@ -134,33 +137,31 @@ proc env_var_exists_and_non_empty { env_var } {
 
 # AUTO_MEMORIES: do-auto-memories writes into $RESULTS_DIR/memories the
 # lists below, and every later step reads the files they name, never
-# what a directory happens to hold.
-#
-# blackboxes.txt, `<module> <area>` a line: the macros, each with its
-# <module>.lib and <module>.lef, and the area synthesis costs it by.
-proc auto_memories_areas { } {
+# what a directory happens to hold. gen_memories.py writes each list
+# whole, after every view exists. Every step reads them from
+# AUTO_MEMORIES_DIR, synthesis included.
+
+# The words of one of those lists; none without AUTO_MEMORIES.
+proc auto_memories_words { list } {
   if { ![env_var_equals AUTO_MEMORIES 1] } {
     return {}
   }
-  set f "$::env(RESULTS_DIR)/memories/blackboxes.txt"
-  set fh [open $f r]
-  set content [string map {\r ""} [read $fh]]
+  set fh [open "$::env(AUTO_MEMORIES_DIR)/$list" r]
+  set content [read $fh]
   close $fh
-  set areas [dict create]
-  foreach line [split $content "\n"] {
-    if { [string trim $line] == "" } {
-      continue
-    }
-    set fields [regexp -all -inline {\S+} $line]
-    if {
-      [llength $fields] != 2
-      || ![string is double -strict [lindex $fields 1]]
-    } {
-      error "$f: expected `<module> <area>`, got `$line`"
-    }
-    dict set areas {*}$fields
-  }
-  return $areas
+  return [regexp -all -inline {\S+} $content]
+}
+
+# blackboxes.txt, `<module> <area>` a line: the macros, each with its
+# <module>.lib and <module>.lef, and the area synthesis costs it by. Its
+# words are a dict of the area of each module.
+proc auto_memories_areas { } {
+  return [auto_memories_words blackboxes.txt]
+}
+
+# The modules synthesis blackboxes, the macros of blackboxes.txt.
+proc auto_memories_blackboxes { } {
+  return [dict keys [auto_memories_areas]]
 }
 
 # A list of module names, one a line:
@@ -171,20 +172,13 @@ proc auto_memories_areas { } {
 # - regfiles.txt: register files that dissolve into their cells after
 #   macro placement (<module>.v, <module>.place).
 proc auto_memories_names { list } {
-  if { ![env_var_equals AUTO_MEMORIES 1] } {
-    return {}
-  }
-  set f "$::env(RESULTS_DIR)/memories/$list"
-  set fh [open $f r]
-  set content [read $fh]
-  close $fh
-  return [regexp -all -inline {\S+} $content]
+  return [auto_memories_words $list]
 }
 
 # The view of every macro in blackboxes.txt, by extension (.lib, .lef).
 proc auto_memories_views { ext } {
-  return [lmap m [dict keys [auto_memories_areas]] {
-    file join $::env(RESULTS_DIR) memories $m$ext
+  return [lmap m [auto_memories_blackboxes] {
+    file join $::env(AUTO_MEMORIES_DIR) $m$ext
   }]
 }
 
@@ -217,13 +211,13 @@ proc pins_fixed_in_floorplan { } {
   }]
 }
 
-# set_place_config arguments for global_placement -place_ios, from the
+# set_placer_config arguments for global_placement -place_ios, from the
 # place_pins settings.
-proc place_pins_args_to_place_config { } {
+proc place_pins_args_to_placer_config { } {
   set config_args [list \
     -io_pin_hor_layers $::env(IO_PLACER_H) \
     -io_pin_ver_layers $::env(IO_PLACER_V)]
-  set pins_args [env_var_or_empty PLACE_PINS_ARGS]
+  set pins_args [command_args place_pins place.main {}]
   for { set i 0 } { $i < [llength $pins_args] } { incr i } {
     set arg [lindex $pins_args $i]
     switch -- $arg {
@@ -263,6 +257,9 @@ proc find_macros { } {
 }
 
 proc erase_non_stage_variables { stage_name } {
+  # Every <COMMAND>_ARGS is checked before the stage reads one, and the
+  # deprecated variables this stage reads are named with their replacement.
+  exec $::env(PYTHON_EXE) $::env(SCRIPTS_DIR)/args.py check $stage_name 2>@ stderr
   if { $::env(KEEP_VARS) } {
     return
   }
@@ -411,6 +408,18 @@ proc final_extracts_parasitics { } {
   }]
 }
 
+# LIB_MODEL=CCS reads CCS libraries. The prima delay calculator simulates
+# the driver waveform on the RC network and costs tens of table lookups
+# per net, so it is used only once the design has global routes, which is
+# when estimate_parasitics switches from placement estimates to global
+# routing parasitics. Call it after the design is loaded or routed.
+proc use_ccs_delay_calculator { } {
+  if { $::env(LIB_MODEL) eq "CCS" && [grt::have_routes] } {
+    puts "Using CCS delay calculation"
+    log_cmd set_delay_calculator prima
+  }
+}
+
 # Load the parasitics that step is timed with and return where they came
 # from: the extracted 6_final.spef when final writes one, else, once the
 # design is placed, what OpenROAD estimates (global routes if there are
@@ -509,6 +518,7 @@ proc orfs_write_db { output_file { endpoint_slack 1 } } {
   if { !$::env(WRITE_ODB_AND_SDC_EACH_STAGE) } {
     return
   }
+  orfs_write_sdc [sdc_file_of $output_file]
   log_cmd write_db $output_file
 }
 
@@ -520,8 +530,8 @@ proc orfs_write_sdc { output_file } {
 }
 
 # For a stage that leaves the design unchanged, copying the input .odb
-# forward is much faster than serializing the in-memory database again
-# with write_db. Gated like orfs_write_db: in a single-process flow
+# and .sdc forward is much faster than serializing the in-memory database
+# again with write_db. Gated like orfs_write_db: in a single-process flow
 # (WRITE_ODB_AND_SDC_EACH_STAGE=0) the input file may not exist and no
 # stage file should be produced.
 #
@@ -533,6 +543,7 @@ proc orfs_copy_db { input_file output_file } {
   if { !$::env(WRITE_ODB_AND_SDC_EACH_STAGE) } {
     return
   }
+  log_cmd exec cp [sdc_file_of $input_file] [sdc_file_of $output_file]
   log_cmd exec cp $input_file $output_file
 }
 
